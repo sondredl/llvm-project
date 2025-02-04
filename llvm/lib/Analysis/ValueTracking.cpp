@@ -113,24 +113,6 @@ static const Instruction *safeCxtI(const Value *V, const Instruction *CxtI) {
   return nullptr;
 }
 
-static const Instruction *safeCxtI(const Value *V1, const Value *V2, const Instruction *CxtI) {
-  // If we've been provided with a context instruction, then use that (provided
-  // it has been inserted).
-  if (CxtI && CxtI->getParent())
-    return CxtI;
-
-  // If the value is really an already-inserted instruction, then use that.
-  CxtI = dyn_cast<Instruction>(V1);
-  if (CxtI && CxtI->getParent())
-    return CxtI;
-
-  CxtI = dyn_cast<Instruction>(V2);
-  if (CxtI && CxtI->getParent())
-    return CxtI;
-
-  return nullptr;
-}
-
 static bool getShuffleDemandedElts(const ShuffleVectorInst *Shuf,
                                    const APInt &DemandedElts,
                                    APInt &DemandedLHS, APInt &DemandedRHS) {
@@ -316,18 +298,14 @@ static bool isKnownNonEqual(const Value *V1, const Value *V2,
                             const SimplifyQuery &Q);
 
 bool llvm::isKnownNonEqual(const Value *V1, const Value *V2,
-                           const DataLayout &DL, AssumptionCache *AC,
-                           const Instruction *CxtI, const DominatorTree *DT,
-                           bool UseInstrInfo) {
+                           const SimplifyQuery &Q, unsigned Depth) {
   // We don't support looking through casts.
   if (V1 == V2 || V1->getType() != V2->getType())
     return false;
   auto *FVTy = dyn_cast<FixedVectorType>(V1->getType());
   APInt DemandedElts =
       FVTy ? APInt::getAllOnes(FVTy->getNumElements()) : APInt(1, 1);
-  return ::isKnownNonEqual(
-      V1, V2, DemandedElts, 0,
-      SimplifyQuery(DL, DT, AC, safeCxtI(V2, V1, CxtI), UseInstrInfo));
+  return ::isKnownNonEqual(V1, V2, DemandedElts, Depth, Q);
 }
 
 bool llvm::MaskedValueIsZero(const Value *V, const APInt &Mask,
@@ -593,11 +571,14 @@ static bool cmpExcludesZero(CmpInst::Predicate Pred, const Value *RHS) {
 }
 
 static void breakSelfRecursivePHI(const Use *U, const PHINode *PHI,
-                                  Value *&ValOut, Instruction *&CtxIOut) {
+                                  Value *&ValOut, Instruction *&CtxIOut,
+                                  const PHINode **PhiOut = nullptr) {
   ValOut = U->get();
   if (ValOut == PHI)
     return;
   CtxIOut = PHI->getIncomingBlock(*U)->getTerminator();
+  if (PhiOut)
+    *PhiOut = PHI;
   Value *V;
   // If the Use is a select of this phi, compute analysis on other arm to break
   // recursion.
@@ -610,11 +591,13 @@ static void breakSelfRecursivePHI(const Use *U, const PHINode *PHI,
   // incoming value to break recursion.
   // TODO: We could handle any number of incoming edges as long as we only have
   // two unique values.
-  else if (auto *IncPhi = dyn_cast<PHINode>(ValOut);
-           IncPhi && IncPhi->getNumIncomingValues() == 2) {
+  if (auto *IncPhi = dyn_cast<PHINode>(ValOut);
+      IncPhi && IncPhi->getNumIncomingValues() == 2) {
     for (int Idx = 0; Idx < 2; ++Idx) {
       if (IncPhi->getIncomingValue(Idx) == PHI) {
         ValOut = IncPhi->getIncomingValue(1 - Idx);
+        if (PhiOut)
+          *PhiOut = IncPhi;
         CtxIOut = IncPhi->getIncomingBlock(1 - Idx)->getTerminator();
         break;
       }
@@ -793,7 +776,10 @@ static void computeKnownBitsFromICmpCond(const Value *V, ICmpInst *Cmp,
   if (match(LHS, m_Trunc(m_Specific(V)))) {
     KnownBits DstKnown(LHS->getType()->getScalarSizeInBits());
     computeKnownBitsFromCmp(LHS, Pred, LHS, RHS, DstKnown, SQ);
-    Known = Known.unionWith(DstKnown.anyext(Known.getBitWidth()));
+    if (cast<TruncInst>(LHS)->hasNoUnsignedWrap())
+      Known = Known.unionWith(DstKnown.zext(Known.getBitWidth()));
+    else
+      Known = Known.unionWith(DstKnown.anyext(Known.getBitWidth()));
     return;
   }
 
@@ -1440,7 +1426,22 @@ static void computeKnownBitsFromOperator(const Operator *I,
     computeKnownBits(I->getOperand(0), Known, Depth + 1, Q);
     // Accumulate the constant indices in a separate variable
     // to minimize the number of calls to computeForAddSub.
-    APInt AccConstIndices(BitWidth, 0, /*IsSigned*/ true);
+    unsigned IndexWidth = Q.DL.getIndexTypeSizeInBits(I->getType());
+    APInt AccConstIndices(IndexWidth, 0);
+
+    auto AddIndexToKnown = [&](KnownBits IndexBits) {
+      if (IndexWidth == BitWidth) {
+        // Note that inbounds does *not* guarantee nsw for the addition, as only
+        // the offset is signed, while the base address is unsigned.
+        Known = KnownBits::add(Known, IndexBits);
+      } else {
+        // If the index width is smaller than the pointer width, only add the
+        // value to the low bits.
+        assert(IndexWidth < BitWidth &&
+               "Index width can't be larger than pointer width");
+        Known.insertBits(KnownBits::add(Known.trunc(IndexWidth), IndexBits), 0);
+      }
+    };
 
     gep_type_iterator GTI = gep_type_begin(I);
     for (unsigned i = 1, e = I->getNumOperands(); i != e; ++i, ++GTI) {
@@ -1478,43 +1479,34 @@ static void computeKnownBitsFromOperator(const Operator *I,
         break;
       }
 
-      unsigned IndexBitWidth = Index->getType()->getScalarSizeInBits();
-      KnownBits IndexBits(IndexBitWidth);
-      computeKnownBits(Index, IndexBits, Depth + 1, Q);
-      TypeSize IndexTypeSize = GTI.getSequentialElementStride(Q.DL);
-      uint64_t TypeSizeInBytes = IndexTypeSize.getKnownMinValue();
-      KnownBits ScalingFactor(IndexBitWidth);
+      TypeSize Stride = GTI.getSequentialElementStride(Q.DL);
+      uint64_t StrideInBytes = Stride.getKnownMinValue();
+      if (!Stride.isScalable()) {
+        // Fast path for constant offset.
+        if (auto *CI = dyn_cast<ConstantInt>(Index)) {
+          AccConstIndices +=
+              CI->getValue().sextOrTrunc(IndexWidth) * StrideInBytes;
+          continue;
+        }
+      }
+
+      KnownBits IndexBits =
+          computeKnownBits(Index, Depth + 1, Q).sextOrTrunc(IndexWidth);
+      KnownBits ScalingFactor(IndexWidth);
       // Multiply by current sizeof type.
       // &A[i] == A + i * sizeof(*A[i]).
-      if (IndexTypeSize.isScalable()) {
+      if (Stride.isScalable()) {
         // For scalable types the only thing we know about sizeof is
         // that this is a multiple of the minimum size.
-        ScalingFactor.Zero.setLowBits(llvm::countr_zero(TypeSizeInBytes));
-      } else if (IndexBits.isConstant()) {
-        APInt IndexConst = IndexBits.getConstant();
-        APInt ScalingFactor(IndexBitWidth, TypeSizeInBytes);
-        IndexConst *= ScalingFactor;
-        AccConstIndices += IndexConst.sextOrTrunc(BitWidth);
-        continue;
+        ScalingFactor.Zero.setLowBits(llvm::countr_zero(StrideInBytes));
       } else {
         ScalingFactor =
-            KnownBits::makeConstant(APInt(IndexBitWidth, TypeSizeInBytes));
+            KnownBits::makeConstant(APInt(IndexWidth, StrideInBytes));
       }
-      IndexBits = KnownBits::mul(IndexBits, ScalingFactor);
-
-      // If the offsets have a different width from the pointer, according
-      // to the language reference we need to sign-extend or truncate them
-      // to the width of the pointer.
-      IndexBits = IndexBits.sextOrTrunc(BitWidth);
-
-      // Note that inbounds does *not* guarantee nsw for the addition, as only
-      // the offset is signed, while the base address is unsigned.
-      Known = KnownBits::add(Known, IndexBits);
+      AddIndexToKnown(KnownBits::mul(IndexBits, ScalingFactor));
     }
-    if (!Known.isUnknown() && !AccConstIndices.isZero()) {
-      KnownBits Index = KnownBits::makeConstant(AccConstIndices);
-      Known = KnownBits::add(Known, Index);
-    }
+    if (!Known.isUnknown() && !AccConstIndices.isZero())
+      AddIndexToKnown(KnownBits::makeConstant(AccConstIndices));
     break;
   }
   case Instruction::PHI: {
@@ -1673,8 +1665,9 @@ static void computeKnownBitsFromOperator(const Operator *I,
       Known.One.setAllBits();
       for (const Use &U : P->operands()) {
         Value *IncValue;
+        const PHINode *CxtPhi;
         Instruction *CxtI;
-        breakSelfRecursivePHI(&U, P, IncValue, CxtI);
+        breakSelfRecursivePHI(&U, P, IncValue, CxtI, &CxtPhi);
         // Skip direct self references.
         if (IncValue == P)
           continue;
@@ -1705,9 +1698,10 @@ static void computeKnownBitsFromOperator(const Operator *I,
                     m_Br(m_c_ICmp(Pred, m_Specific(IncValue), m_APInt(RHSC)),
                          m_BasicBlock(TrueSucc), m_BasicBlock(FalseSucc)))) {
             // Check for cases of duplicate successors.
-            if ((TrueSucc == P->getParent()) != (FalseSucc == P->getParent())) {
+            if ((TrueSucc == CxtPhi->getParent()) !=
+                (FalseSucc == CxtPhi->getParent())) {
               // If we're using the false successor, invert the predicate.
-              if (FalseSucc == P->getParent())
+              if (FalseSucc == CxtPhi->getParent())
                 Pred = CmpInst::getInversePredicate(Pred);
               // Get the knownbits implied by the incoming phi condition.
               auto CR = ConstantRange::makeExactICmpRegion(Pred, *RHSC);
@@ -2645,40 +2639,42 @@ static bool isKnownNonNullFromDominatingCondition(const Value *V,
     return false;
 
   unsigned NumUsesExplored = 0;
-  for (const auto *U : V->users()) {
+  for (auto &U : V->uses()) {
     // Avoid massive lists
     if (NumUsesExplored >= DomConditionsMaxUses)
       break;
     NumUsesExplored++;
 
+    const Instruction *UI = cast<Instruction>(U.getUser());
     // If the value is used as an argument to a call or invoke, then argument
     // attributes may provide an answer about null-ness.
-    if (const auto *CB = dyn_cast<CallBase>(U))
-      if (auto *CalledFunc = CB->getCalledFunction())
-        for (const Argument &Arg : CalledFunc->args())
-          if (CB->getArgOperand(Arg.getArgNo()) == V &&
-              Arg.hasNonNullAttr(/* AllowUndefOrPoison */ false) &&
-              DT->dominates(CB, CtxI))
-            return true;
+    if (V->getType()->isPointerTy()) {
+      if (const auto *CB = dyn_cast<CallBase>(UI)) {
+        if (CB->isArgOperand(&U) &&
+            CB->paramHasNonNullAttr(CB->getArgOperandNo(&U),
+                                    /*AllowUndefOrPoison=*/false) &&
+            DT->dominates(CB, CtxI))
+          return true;
+      }
+    }
 
     // If the value is used as a load/store, then the pointer must be non null.
-    if (V == getLoadStorePointerOperand(U)) {
-      const Instruction *I = cast<Instruction>(U);
-      if (!NullPointerIsDefined(I->getFunction(),
+    if (V == getLoadStorePointerOperand(UI)) {
+      if (!NullPointerIsDefined(UI->getFunction(),
                                 V->getType()->getPointerAddressSpace()) &&
-          DT->dominates(I, CtxI))
+          DT->dominates(UI, CtxI))
         return true;
     }
 
-    if ((match(U, m_IDiv(m_Value(), m_Specific(V))) ||
-         match(U, m_IRem(m_Value(), m_Specific(V)))) &&
-        isValidAssumeForContext(cast<Instruction>(U), CtxI, DT))
+    if ((match(UI, m_IDiv(m_Value(), m_Specific(V))) ||
+         match(UI, m_IRem(m_Value(), m_Specific(V)))) &&
+        isValidAssumeForContext(UI, CtxI, DT))
       return true;
 
     // Consider only compare instructions uniquely controlling a branch
     Value *RHS;
     CmpPredicate Pred;
-    if (!match(U, m_c_ICmp(Pred, m_Specific(V), m_Value(RHS))))
+    if (!match(UI, m_c_ICmp(Pred, m_Specific(V), m_Value(RHS))))
       continue;
 
     bool NonNullIfTrue;
@@ -2691,7 +2687,7 @@ static bool isKnownNonNullFromDominatingCondition(const Value *V,
 
     SmallVector<const User *, 4> WorkList;
     SmallPtrSet<const User *, 4> Visited;
-    for (const auto *CmpU : U->users()) {
+    for (const auto *CmpU : UI->users()) {
       assert(WorkList.empty() && "Should be!");
       if (Visited.insert(CmpU).second)
         WorkList.push_back(CmpU);

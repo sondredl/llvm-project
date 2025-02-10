@@ -4,7 +4,8 @@ compile: generate
 	cd build && ninja
 
 generate: mkBuildDir
-	cd build && cmake -G Ninja ../llvm -DLLVM_ENABLE_PROJECTS='clang;clang-tools-extra;lld' -DCMAKE_BUILD_TYPE=Release
+	# cd build && cmake -G Ninja ../llvm -DLLVM_ENABLE_PROJECTS='clang;clang-tools-extra;lld' -DCMAKE_BUILD_TYPE=Release
+	cd build && cmake -G Ninja ../llvm -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=~/llvm-install
 
 mkBuildDir:
 	mkdir -p build
@@ -17,3 +18,5 @@ install:
 test:
 	cd build && ninja check-all
 
+release:
+	cd build && cmake -G Ninja ../llvm -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=~/llvm-install

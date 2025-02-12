@@ -20,3 +20,6 @@ test:
 
 release:
 	cd build && cmake -G Ninja ../llvm -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=~/llvm-install
+
+documentation:
+	doxygen doxyconfig

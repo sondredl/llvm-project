@@ -5,7 +5,7 @@ compile: generate
 
 generate: mkBuildDir
 	# cd build && cmake -G Ninja ../llvm -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=~/llvm-install -D_GLIBCXX_ASSERTIONS=ON
-	cd build && cmake -G Ninja ../llvm -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=~/llvm-install
+	cd build && cmake -G Ninja ../llvm -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=~/llvm-install
 
 mkBuildDir:
 	mkdir -p build

@@ -141,8 +141,9 @@ protected:
         if (!D)
           return;
         Publish([&]() {
-          const_cast<llvm::unique_function<void(PathRef, std::vector<Diag>)> &>(
-              *D)(File, Diags);
+          const_cast<
+              llvm::unique_function<void(PathRef, std::vector<Diag>)> &> (*D)(
+              File, Diags);
         });
       }
     };
@@ -445,9 +446,8 @@ TEST_F(TUSchedulerTests, InvalidationUnchanged) {
   std::atomic<int> Actions(0);
 
   Notification Start;
-  updateWithDiags(S, Path, "a", WantDiagnostics::Yes, [&](std::vector<Diag>) {
-    Start.wait();
-  });
+  updateWithDiags(S, Path, "a", WantDiagnostics::Yes,
+                  [&](std::vector<Diag>) { Start.wait(); });
   S.runWithAST(
       "invalidatable", Path,
       [&](llvm::Expected<InputsAndAST> AST) {
@@ -1216,9 +1216,10 @@ TEST_F(TUSchedulerTests, PublishWithStalePreamble) {
     void onPreambleAST(
         PathRef Path, llvm::StringRef Version, CapturedASTCtx,
         std::shared_ptr<const include_cleaner::PragmaIncludes>) override {
-      if (BuildBefore)
+      if (BuildBefore) {
         ASSERT_TRUE(UnblockPreamble.wait(timeoutSeconds(60)))
             << "Expected notification";
+      }
       BuildBefore = true;
     }
 
@@ -1593,8 +1594,7 @@ TEST_F(TUSchedulerTests, PreambleThrottle) {
     // The throttler saw all files, and we built them.
     EXPECT_THAT(Throttler.Acquires,
                 testing::UnorderedElementsAreArray(Filenames));
-    EXPECT_THAT(BuiltFilenames,
-                testing::UnorderedElementsAreArray(Filenames));
+    EXPECT_THAT(BuiltFilenames, testing::UnorderedElementsAreArray(Filenames));
     // We built the files in reverse order that the throttler saw them.
     EXPECT_THAT(BuiltFilenames,
                 testing::ElementsAreArray(Throttler.Acquires.rbegin(),

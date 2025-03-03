@@ -1079,12 +1079,12 @@ TEST_F(SymbolCollectorTest, SpelledReferences) {
     llvm::StringRef Main;
     llvm::StringRef TargetSymbolName;
   } TestCases[] = {
-    {
-      R"cpp(
+      {
+          R"cpp(
         struct Foo;
         #define MACRO Foo
       )cpp",
-      R"cpp(
+          R"cpp(
         struct $spelled[[Foo]] {
           $spelled[[Foo]]();
           ~$spelled[[Foo]]();
@@ -1092,34 +1092,35 @@ TEST_F(SymbolCollectorTest, SpelledReferences) {
         $spelled[[Foo]] Variable1;
         $implicit[[MACRO]] Variable2;
       )cpp",
-      "Foo",
-    },
-    {
-      R"cpp(
+          "Foo",
+      },
+      {
+          R"cpp(
         class Foo {
         public:
           Foo() = default;
         };
       )cpp",
-      R"cpp(
+          R"cpp(
         void f() { Foo $implicit[[f]]; f = $spelled[[Foo]]();}
       )cpp",
-      "Foo::Foo" /// constructor.
-    },
-    { // Unclean identifiers
-      R"cpp(
+          "Foo::Foo" /// constructor.
+      },
+      {
+          // Unclean identifiers
+          R"cpp(
         struct Foo {};
       )cpp",
-      R"cpp(
+          R"cpp(
         $spelled[[Fo\
 o]] f{};
       )cpp",
-      "Foo",
-    },
+          "Foo",
+      },
   };
   CollectorOpts.RefFilter = RefKind::All;
   CollectorOpts.RefsInHeaders = false;
-  for (const auto& T : TestCases) {
+  for (const auto &T : TestCases) {
     SCOPED_TRACE(T.Header + "\n---\n" + T.Main);
     Annotations Header(T.Header);
     Annotations Main(T.Main);
@@ -2176,14 +2177,14 @@ TEST_F(SymbolCollectorTest, Concepts) {
 
 TEST_F(SymbolCollectorTest, IncludeHeaderForwardDecls) {
   CollectorOpts.CollectIncludePath = true;
-  const std::string Header = R"cpp(#pragma once 
+  const std::string Header = R"cpp(#pragma once
 struct Foo;
 #include "full.h"
 )cpp";
   auto FullFile = testPath("full.h");
   InMemoryFileSystem->addFile(FullFile, 0,
                               llvm::MemoryBuffer::getMemBuffer(R"cpp(
-#pragma once 
+#pragma once
 struct Foo {};)cpp"));
   runSymbolCollector(Header, /*Main=*/"",
                      /*ExtraArgs=*/{"-I", testRoot()});

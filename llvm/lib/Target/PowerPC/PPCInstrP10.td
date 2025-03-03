@@ -79,6 +79,10 @@ def SDT_PPCxxmfacc : SDTypeProfile<1, 1, [
   SDTCisVT<0, v512i1>, SDTCisVT<1, v512i1>
 ]>;
 
+def SDT_PPCsetbc : SDTypeProfile<1, 1, [
+  SDTCisInt<0>, SDTCisInt<1>
+]>;
+
 //===----------------------------------------------------------------------===//
 // ISA 3.1 specific PPCISD nodes.
 //
@@ -91,6 +95,8 @@ def PPCAccExtractVsx : SDNode<"PPCISD::EXTRACT_VSX_REG", SDT_PPCAccExtractVsx,
 def PPCPairExtractVsx : SDNode<"PPCISD::EXTRACT_VSX_REG", SDT_PPCPairExtractVsx,
                         []>;
 def PPCxxmfacc : SDNode<"PPCISD::XXMFACC", SDT_PPCxxmfacc, []>;
+def PPCsetbc  : SDNode<"PPCISD::SETBC",   SDT_PPCsetbc, []>;
+def PPCsetbcr : SDNode<"PPCISD::SETBCR",  SDT_PPCsetbc, []>;
 
 //===----------------------------------------------------------------------===//
 
@@ -105,7 +111,7 @@ def SDT_PPCLXVRZX : SDTypeProfile<1, 2, [
 
 // PPC Specific DAG Nodes.
 def PPClxvrzx : SDNode<"PPCISD::LXVRZX", SDT_PPCLXVRZX,
-                       [SDNPHasChain, SDNPMayLoad]>;
+                       [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 
 // Top-level class for prefixed instructions.
 class PI<bits<6> pref, bits<6> opcode, dag OOL, dag IOL, string asmstr,
@@ -137,6 +143,10 @@ class PI<bits<6> pref, bits<6> opcode, dag OOL, dag IOL, string asmstr,
 
   bits<1> Prefixed = 1;  // This is a prefixed instruction.
   let TSFlags{7}  = Prefixed;
+
+  // Indicate that this instruction takes a register+immediate memory operand.
+  bits<1> MemriOp = 0;
+  let TSFlags{10} = MemriOp;
 
   // For cases where multiple instruction definitions really represent the
   // same underlying instruction but with one definition for 64-bit arguments
@@ -183,7 +193,7 @@ multiclass VXForm_VTB5_RCr<bits<10> xo, bits<5> R, dag OOL, dag IOL,
 
 class MLS_DForm_R_SI34_RTA5_MEM<bits<6> opcode, dag OOL, dag IOL, string asmstr,
                                 InstrItinClass itin, list<dag> pattern>
-  : PI<1, opcode, OOL, IOL, asmstr, itin> {
+  : PI<1, opcode, OOL, IOL, asmstr, itin>, MemriOp {
   bits<5> RST;
   bits<5> RA;
   bits<34> D;
@@ -257,7 +267,7 @@ multiclass MLS_DForm_R_SI34_RTA5_p<bits<6> opcode, dag OOL, dag IOL,
 
 class 8LS_DForm_R_SI34_RTA5_MEM<bits<6> opcode, dag OOL, dag IOL, string asmstr,
                                 InstrItinClass itin, list<dag> pattern>
-  : PI<1, opcode, OOL, IOL, asmstr, itin> {
+  : PI<1, opcode, OOL, IOL, asmstr, itin>, MemriOp {
   bits<5> RST;
   bits<5> RA;
   bits<34> D;
@@ -281,7 +291,7 @@ class 8LS_DForm_R_SI34_RTA5_MEM<bits<6> opcode, dag OOL, dag IOL, string asmstr,
 class 8LS_DForm_R_SI34_XT6_RA5_MEM<bits<5> opcode, dag OOL, dag IOL,
                                    string asmstr, InstrItinClass itin,
                                    list<dag> pattern>
-  : PI<1, { opcode, ? }, OOL, IOL, asmstr, itin> {
+  : PI<1, { opcode, ? }, OOL, IOL, asmstr, itin>, MemriOp {
   bits<6> XST;
   bits<5> RA;
   bits<34> D;
@@ -585,7 +595,7 @@ multiclass MLS_DForm_R_SI34_RTA5_MEM_p<bits<6> opcode, dag OOL, dag IOL,
                                      isPCRel;
   let isAsmParserOnly = 1, hasNoSchedulingInfo = 1 in {
     def nopc : MLS_DForm_R_SI34_RTA5_MEM<opcode, OOL, IOL, asmstr, itin, []>;
-    let RA = 0 in
+    let RA = 0, MemriOp = 0 in
       def onlypc : MLS_DForm_R_SI34_RTA5_MEM<opcode, OOL, PCRelOnly_IOL,
                                              asmstr_pcext, itin, []>, isPCRel;
   }
@@ -602,7 +612,7 @@ multiclass 8LS_DForm_R_SI34_RTA5_MEM_p<bits<6> opcode, dag OOL, dag IOL,
                                      isPCRel;
   let isAsmParserOnly = 1, hasNoSchedulingInfo = 1 in {
     def nopc : 8LS_DForm_R_SI34_RTA5_MEM<opcode, OOL, IOL, asmstr, itin, []>;
-    let RA = 0 in
+    let RA = 0, MemriOp = 0 in
       def onlypc : 8LS_DForm_R_SI34_RTA5_MEM<opcode, OOL, PCRelOnly_IOL,
                                              asmstr_pcext, itin, []>, isPCRel;
   }
@@ -619,7 +629,7 @@ multiclass 8LS_DForm_R_SI34_XT6_RA5_MEM_p<bits<5> opcode, dag OOL, dag IOL,
                                         isPCRel;
   let isAsmParserOnly = 1, hasNoSchedulingInfo = 1 in {
     def nopc : 8LS_DForm_R_SI34_XT6_RA5_MEM<opcode, OOL, IOL, asmstr, itin, []>;
-    let RA = 0 in
+    let RA = 0, MemriOp = 0 in
       def onlypc : 8LS_DForm_R_SI34_XT6_RA5_MEM<opcode, OOL, PCRelOnly_IOL,
                                                 asmstr_pcext, itin, []>, isPCRel;
   }
@@ -654,75 +664,7 @@ let Predicates = [PrefixInstrs] in {
                                  (ins s34imm:$SI),
                                  "pli $RT, $SI", IIC_IntSimple, []>;
   }
-}
 
-let Predicates = [PrefixInstrs, HasFPU] in {
-  let mayLoad = 1, mayStore = 0 in {
-    defm PLFS :
-      MLS_DForm_R_SI34_RTA5_MEM_p<48, (outs f4rc:$RST), (ins (memri34 $D, $RA):$addr),
-                                  (ins (memri34_pcrel $D, $RA):$addr),
-                                  (ins s34imm_pcrel:$D), "plfs $RST, $addr",
-                                  "plfs $RST, $D", IIC_LdStLFD>;
-    defm PLFD :
-      MLS_DForm_R_SI34_RTA5_MEM_p<50, (outs f8rc:$RST), (ins (memri34 $D, $RA):$addr),
-                                  (ins  (memri34_pcrel $D, $RA):$addr),
-                                  (ins s34imm_pcrel:$D), "plfd $RST, $addr",
-                                  "plfd $RST, $D", IIC_LdStLFD>;
-  }
-  let mayStore = 1, mayLoad = 0 in {
-    defm PSTFS :
-      MLS_DForm_R_SI34_RTA5_MEM_p<52, (outs), (ins f4rc:$RST, (memri34 $D, $RA):$addr),
-                                  (ins f4rc:$RST, (memri34_pcrel $D, $RA):$addr),
-                                  (ins f4rc:$RST, s34imm_pcrel:$D),
-                                  "pstfs $RST, $addr", "pstfs $RST, $D", IIC_LdStLFD>;
-    defm PSTFD :
-      MLS_DForm_R_SI34_RTA5_MEM_p<54, (outs), (ins f8rc:$RST, (memri34 $D, $RA):$addr),
-                                  (ins f8rc:$RST, (memri34_pcrel $D, $RA):$addr),
-                                  (ins f8rc:$RST, s34imm_pcrel:$D),
-                                  "pstfd $RST, $addr", "pstfd $RST, $D", IIC_LdStLFD>;
-  }
-}
-
-let Predicates = [PrefixInstrs, HasP10Vector] in {
-  let mayLoad = 1, mayStore = 0 in {
-    defm PLXV :
-      8LS_DForm_R_SI34_XT6_RA5_MEM_p<25, (outs vsrc:$XST), (ins (memri34 $D, $RA):$addr),
-                                     (ins (memri34_pcrel $D, $RA):$addr),
-                                     (ins s34imm_pcrel:$D),
-                                     "plxv $XST, $addr", "plxv $XST, $D", IIC_LdStLFD>;
-    defm PLXSSP :
-      8LS_DForm_R_SI34_RTA5_MEM_p<43, (outs vfrc:$RST), (ins (memri34 $D, $RA):$addr),
-                                  (ins (memri34_pcrel $D, $RA):$addr),
-                                  (ins s34imm_pcrel:$D),
-                                  "plxssp $RST, $addr",  "plxssp $RST, $D",
-                                  IIC_LdStLFD>;
-    defm PLXSD :
-      8LS_DForm_R_SI34_RTA5_MEM_p<42, (outs vfrc:$RST), (ins (memri34 $D, $RA):$addr),
-                                  (ins (memri34_pcrel $D, $RA):$addr),
-                                  (ins s34imm_pcrel:$D),
-                                  "plxsd $RST, $addr", "plxsd $RST, $D",
-                                  IIC_LdStLFD>;
-  }
- let mayStore = 1, mayLoad = 0 in {
-    defm PSTXV :
-      8LS_DForm_R_SI34_XT6_RA5_MEM_p<27, (outs), (ins vsrc:$XST, (memri34 $D, $RA):$addr),
-                                     (ins vsrc:$XST, (memri34_pcrel $D, $RA):$addr),
-                                     (ins vsrc:$XST, s34imm_pcrel:$D),
-                                     "pstxv $XST, $addr", "pstxv $XST, $D", IIC_LdStLFD>;
-    defm PSTXSSP :
-      8LS_DForm_R_SI34_RTA5_MEM_p<47, (outs), (ins vfrc:$RST, (memri34 $D, $RA):$addr),
-                                  (ins vfrc:$RST, (memri34_pcrel $D, $RA):$addr),
-                                  (ins vfrc:$RST, s34imm_pcrel:$D),
-                                  "pstxssp $RST, $addr", "pstxssp $RST, $D", IIC_LdStLFD>;
-    defm PSTXSD :
-      8LS_DForm_R_SI34_RTA5_MEM_p<46, (outs), (ins vfrc:$RST, (memri34 $D, $RA):$addr),
-                                  (ins vfrc:$RST, (memri34_pcrel $D, $RA):$addr),
-                                  (ins vfrc:$RST, s34imm_pcrel:$D),
-                                  "pstxsd $RST, $addr", "pstxsd $RST, $D", IIC_LdStLFD>;
-  }
-}
-
-let Predicates = [PrefixInstrs] in {
   let mayLoad = 1, mayStore = 0 in {
     let Interpretation64Bit = 1, isCodeGenOnly = 1 in {
       defm PLBZ8 :
@@ -826,9 +768,96 @@ let Predicates = [PrefixInstrs] in {
   }
 }
 
+let Predicates = [PrefixInstrs, HasFPU] in {
+  let mayLoad = 1, mayStore = 0 in {
+    defm PLFS :
+      MLS_DForm_R_SI34_RTA5_MEM_p<48, (outs f4rc:$RST), (ins (memri34 $D, $RA):$addr),
+                                  (ins (memri34_pcrel $D, $RA):$addr),
+                                  (ins s34imm_pcrel:$D), "plfs $RST, $addr",
+                                  "plfs $RST, $D", IIC_LdStLFD>;
+    defm PLFD :
+      MLS_DForm_R_SI34_RTA5_MEM_p<50, (outs f8rc:$RST), (ins (memri34 $D, $RA):$addr),
+                                  (ins  (memri34_pcrel $D, $RA):$addr),
+                                  (ins s34imm_pcrel:$D), "plfd $RST, $addr",
+                                  "plfd $RST, $D", IIC_LdStLFD>;
+  }
+  let mayStore = 1, mayLoad = 0 in {
+    defm PSTFS :
+      MLS_DForm_R_SI34_RTA5_MEM_p<52, (outs), (ins f4rc:$RST, (memri34 $D, $RA):$addr),
+                                  (ins f4rc:$RST, (memri34_pcrel $D, $RA):$addr),
+                                  (ins f4rc:$RST, s34imm_pcrel:$D),
+                                  "pstfs $RST, $addr", "pstfs $RST, $D", IIC_LdStLFD>;
+    defm PSTFD :
+      MLS_DForm_R_SI34_RTA5_MEM_p<54, (outs), (ins f8rc:$RST, (memri34 $D, $RA):$addr),
+                                  (ins f8rc:$RST, (memri34_pcrel $D, $RA):$addr),
+                                  (ins f8rc:$RST, s34imm_pcrel:$D),
+                                  "pstfd $RST, $addr", "pstfd $RST, $D", IIC_LdStLFD>;
+  }
+}
+
+let Predicates = [PrefixInstrs, HasP10Vector] in {
+  let mayLoad = 1, mayStore = 0 in {
+    defm PLXV :
+      8LS_DForm_R_SI34_XT6_RA5_MEM_p<25, (outs vsrc:$XST), (ins (memri34 $D, $RA):$addr),
+                                     (ins (memri34_pcrel $D, $RA):$addr),
+                                     (ins s34imm_pcrel:$D),
+                                     "plxv $XST, $addr", "plxv $XST, $D", IIC_LdStLFD>;
+    defm PLXSSP :
+      8LS_DForm_R_SI34_RTA5_MEM_p<43, (outs vfrc:$RST), (ins (memri34 $D, $RA):$addr),
+                                  (ins (memri34_pcrel $D, $RA):$addr),
+                                  (ins s34imm_pcrel:$D),
+                                  "plxssp $RST, $addr",  "plxssp $RST, $D",
+                                  IIC_LdStLFD>;
+    defm PLXSD :
+      8LS_DForm_R_SI34_RTA5_MEM_p<42, (outs vfrc:$RST), (ins (memri34 $D, $RA):$addr),
+                                  (ins (memri34_pcrel $D, $RA):$addr),
+                                  (ins s34imm_pcrel:$D),
+                                  "plxsd $RST, $addr", "plxsd $RST, $D",
+                                  IIC_LdStLFD>;
+  }
+ let mayStore = 1, mayLoad = 0 in {
+    defm PSTXV :
+      8LS_DForm_R_SI34_XT6_RA5_MEM_p<27, (outs), (ins vsrc:$XST, (memri34 $D, $RA):$addr),
+                                     (ins vsrc:$XST, (memri34_pcrel $D, $RA):$addr),
+                                     (ins vsrc:$XST, s34imm_pcrel:$D),
+                                     "pstxv $XST, $addr", "pstxv $XST, $D", IIC_LdStLFD>;
+    defm PSTXSSP :
+      8LS_DForm_R_SI34_RTA5_MEM_p<47, (outs), (ins vfrc:$RST, (memri34 $D, $RA):$addr),
+                                  (ins vfrc:$RST, (memri34_pcrel $D, $RA):$addr),
+                                  (ins vfrc:$RST, s34imm_pcrel:$D),
+                                  "pstxssp $RST, $addr", "pstxssp $RST, $D", IIC_LdStLFD>;
+    defm PSTXSD :
+      8LS_DForm_R_SI34_RTA5_MEM_p<46, (outs), (ins vfrc:$RST, (memri34 $D, $RA):$addr),
+                                  (ins vfrc:$RST, (memri34_pcrel $D, $RA):$addr),
+                                  (ins vfrc:$RST, s34imm_pcrel:$D),
+                                  "pstxsd $RST, $addr", "pstxsd $RST, $D", IIC_LdStLFD>;
+  }
+  def XXPERMX :
+    8RR_XX4Form_IMM3_XTABC6<34, 0, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
+                            vsrc:$XC, u3imm:$IMM),
+                            "xxpermx $XT, $XA, $XB, $XC, $IMM",
+                            IIC_VecPerm, []>;
+  def XXBLENDVB :
+    8RR_XX4Form_XTABC6<33, 0, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
+                       vsrc:$XC), "xxblendvb $XT, $XA, $XB, $XC",
+                       IIC_VecGeneral, []>;
+  def XXBLENDVH :
+    8RR_XX4Form_XTABC6<33, 1, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
+                       vsrc:$XC), "xxblendvh $XT, $XA, $XB, $XC",
+                       IIC_VecGeneral, []>;
+  def XXBLENDVW :
+    8RR_XX4Form_XTABC6<33, 2, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
+                       vsrc:$XC), "xxblendvw $XT, $XA, $XB, $XC",
+                       IIC_VecGeneral, []>;
+  def XXBLENDVD :
+    8RR_XX4Form_XTABC6<33, 3, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
+                       vsrc:$XC), "xxblendvd $XT, $XA, $XB, $XC",
+                       IIC_VecGeneral, []>;
+}
+
 class DQForm_XTp5_RA17_MEM<bits<6> opcode, bits<4> xo, dag OOL, dag IOL,
                            string asmstr, InstrItinClass itin, list<dag> pattern>
-  : I<opcode, OOL, IOL, asmstr, itin> {
+  : I<opcode, OOL, IOL, asmstr, itin>, MemriOp {
   bits<5> XTp;
   bits<5> RA;
   bits<12> DQ;
@@ -860,7 +889,7 @@ class XForm_XTp5_XAB5<bits<6> opcode, bits<10> xo, dag OOL, dag IOL,
 
 class 8LS_DForm_R_XTp5_SI34_MEM<bits<6> opcode, dag OOL, dag IOL, string asmstr,
                                 InstrItinClass itin, list<dag> pattern>
-  : PI<1, opcode, OOL, IOL, asmstr, itin> {
+  : PI<1, opcode, OOL, IOL, asmstr, itin>, MemriOp {
   bits<5> XTp;
   bits<5> RA;
   bits<34> D;
@@ -891,7 +920,7 @@ multiclass 8LS_DForm_R_XTp5_SI34_MEM_p<bits<6> opcode, dag OOL,
                                      isPCRel;
   let isAsmParserOnly = 1, hasNoSchedulingInfo = 1 in {
     def nopc : 8LS_DForm_R_XTp5_SI34_MEM<opcode, OOL, IOL, asmstr, itin, []>;
-    let RA = 0 in
+    let RA = 0, MemriOp = 0 in
       def onlypc : 8LS_DForm_R_XTp5_SI34_MEM<opcode, OOL, PCRelOnly_IOL,
                                              asmstr_pcext, itin, []>, isPCRel;
   }
@@ -1132,26 +1161,25 @@ let Predicates = [PairedVectorMemops] in {
             (v4i32 (EXTRACT_SUBREG $v, sub_vsx0))>;
   def : Pat<(v4i32 (PPCPairExtractVsx vsrpevenrc:$v, 1)),
             (v4i32 (EXTRACT_SUBREG $v, sub_vsx1))>;
-}
 
-let mayLoad = 1, mayStore = 0, Predicates = [PairedVectorMemops] in {
-  def LXVP : DQForm_XTp5_RA17_MEM<6, 0, (outs vsrprc:$XTp),
-                                  (ins (memrix16 $DQ, $RA):$addr), "lxvp $XTp, $addr",
-                                  IIC_LdStLFD, []>;
-  def LXVPX : XForm_XTp5_XAB5<31, 333, (outs vsrprc:$XTp), (ins (memrr $RA, $RB):$addr),
-                              "lxvpx $XTp, $addr", IIC_LdStLFD,
-                              []>;
-}
+  let mayLoad = 1, mayStore = 0 in {
+    def LXVP : DQForm_XTp5_RA17_MEM<6, 0, (outs vsrprc:$XTp),
+                                    (ins (memrix16 $DQ, $RA):$addr), "lxvp $XTp, $addr",
+                                    IIC_LdStLFD, []>;
+    def LXVPX : XForm_XTp5_XAB5<31, 333, (outs vsrprc:$XTp), (ins (memrr $RA, $RB):$addr),
+                                "lxvpx $XTp, $addr", IIC_LdStLFD,
+                                []>;
+  }
 
-let mayLoad = 0, mayStore = 1, Predicates = [PairedVectorMemops] in {
-  def STXVP : DQForm_XTp5_RA17_MEM<6, 1, (outs), (ins vsrprc:$XTp,
-                                   (memrix16 $DQ, $RA):$addr), "stxvp $XTp, $addr",
-                                   IIC_LdStLFD, []>;
-  def STXVPX : XForm_XTp5_XAB5<31, 461, (outs), (ins vsrprc:$XTp, (memrr $RA, $RB):$addr),
-                               "stxvpx $XTp, $addr", IIC_LdStLFD,
-                               []>;
+  let mayLoad = 0, mayStore = 1 in {
+    def STXVP : DQForm_XTp5_RA17_MEM<6, 1, (outs), (ins vsrprc:$XTp,
+                                     (memrix16 $DQ, $RA):$addr), "stxvp $XTp, $addr",
+                                     IIC_LdStLFD, []>;
+    def STXVPX : XForm_XTp5_XAB5<31, 461, (outs), (ins vsrprc:$XTp, (memrr $RA, $RB):$addr),
+                                 "stxvpx $XTp, $addr", IIC_LdStLFD,
+                                 []>;
+  }
 }
-
 let mayLoad = 1, mayStore = 0, Predicates = [PairedVectorMemops, PrefixInstrs, HasP10Vector] in {
   defm PLXVP :
     8LS_DForm_R_XTp5_SI34_MEM_p<58, (outs vsrprc:$XTp), (ins (memri34 $D, $RA):$addr),
@@ -1252,6 +1280,42 @@ let Predicates = [PCRelativeMemops] in {
   def : Pat<(store i64:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
             (PSTDpc $RS, $ga, 0)>;
 
+  // Atomic Load
+  def : Pat<(i32 (atomic_load_8 (PPCmatpcreladdr PCRelForm:$ga))),
+            (PLBZpc $ga, 0)>;
+  def : Pat<(i32 (atomic_load_16 (PPCmatpcreladdr PCRelForm:$ga))),
+            (PLHZpc $ga, 0)>;
+  def : Pat<(i32 (atomic_load_32 (PPCmatpcreladdr PCRelForm:$ga))),
+            (PLWZpc $ga, 0)>;
+  def : Pat<(i64 (atomic_load_64 (PPCmatpcreladdr PCRelForm:$ga))),
+            (PLDpc $ga, 0)>;
+
+  // Atomic Store
+  def : Pat<(atomic_store_8 i32:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
+            (PSTBpc $RS, $ga, 0)>;
+  def : Pat<(atomic_store_16 i32:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
+            (PSTHpc $RS, $ga, 0)>;
+  def : Pat<(atomic_store_32 i32:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
+            (PSTWpc $RS, $ga, 0)>;
+  def : Pat<(atomic_store_8 i64:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
+            (PSTB8pc $RS, $ga, 0)>;
+  def : Pat<(atomic_store_16 i64:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
+            (PSTH8pc $RS, $ga, 0)>;
+  def : Pat<(atomic_store_32 i64:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
+            (PSTW8pc $RS, $ga, 0)>;
+  def : Pat<(atomic_store_64 i64:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
+            (PSTDpc $RS, $ga, 0)>;
+
+  // If the PPCmatpcreladdr node is not caught by any other pattern it should be
+  // caught here and turned into a paddi instruction to materialize the address.
+  def : Pat<(PPCmatpcreladdr PCRelForm:$addr), (PADDI8pc 0, $addr)>;
+  // PPCtlsdynamatpcreladdr node is used for TLS dynamic models to materialize
+  // tls global address with paddi instruction.
+  def : Pat<(PPCtlsdynamatpcreladdr PCRelForm:$addr), (PADDI8pc 0, $addr)>;
+  // PPCtlslocalexecmataddr node is used for TLS local exec models to
+  // materialize tls global address with paddi instruction.
+  def : Pat<(PPCaddTls i64:$in, (PPCtlslocalexecmataddr tglobaltlsaddr:$addr)),
+            (PADDI8 $in, $addr)>;
 }
 
 let Predicates = [PCRelativeMemops, HasFPU] in {
@@ -1319,69 +1383,6 @@ let Predicates = [PCRelativeMemops, HasP10Vector] in {
             (PSTXSDpc (COPY_TO_REGCLASS $src, VFRC), $dst, 0)>;
 }
 
-let Predicates = [PCRelativeMemops] in {
-  // Atomic Load
-  def : Pat<(i32 (atomic_load_8 (PPCmatpcreladdr PCRelForm:$ga))),
-            (PLBZpc $ga, 0)>;
-  def : Pat<(i32 (atomic_load_16 (PPCmatpcreladdr PCRelForm:$ga))),
-            (PLHZpc $ga, 0)>;
-  def : Pat<(i32 (atomic_load_32 (PPCmatpcreladdr PCRelForm:$ga))),
-            (PLWZpc $ga, 0)>;
-  def : Pat<(i64 (atomic_load_64 (PPCmatpcreladdr PCRelForm:$ga))),
-            (PLDpc $ga, 0)>;
-
-  // Atomic Store
-  def : Pat<(atomic_store_8 i32:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
-            (PSTBpc $RS, $ga, 0)>;
-  def : Pat<(atomic_store_16 i32:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
-            (PSTHpc $RS, $ga, 0)>;
-  def : Pat<(atomic_store_32 i32:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
-            (PSTWpc $RS, $ga, 0)>;
-  def : Pat<(atomic_store_8 i64:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
-            (PSTB8pc $RS, $ga, 0)>;
-  def : Pat<(atomic_store_16 i64:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
-            (PSTH8pc $RS, $ga, 0)>;
-  def : Pat<(atomic_store_32 i64:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
-            (PSTW8pc $RS, $ga, 0)>;
-  def : Pat<(atomic_store_64 i64:$RS, (PPCmatpcreladdr PCRelForm:$ga)),
-            (PSTDpc $RS, $ga, 0)>;
-
-  // If the PPCmatpcreladdr node is not caught by any other pattern it should be
-  // caught here and turned into a paddi instruction to materialize the address.
-  def : Pat<(PPCmatpcreladdr PCRelForm:$addr), (PADDI8pc 0, $addr)>;
-  // PPCtlsdynamatpcreladdr node is used for TLS dynamic models to materialize
-  // tls global address with paddi instruction.
-  def : Pat<(PPCtlsdynamatpcreladdr PCRelForm:$addr), (PADDI8pc 0, $addr)>;
-  // PPCtlslocalexecmataddr node is used for TLS local exec models to
-  // materialize tls global address with paddi instruction.
-  def : Pat<(PPCaddTls i64:$in, (PPCtlslocalexecmataddr tglobaltlsaddr:$addr)),
-            (PADDI8 $in, $addr)>;
-}
-
-let Predicates = [PrefixInstrs, HasP10Vector] in {
-  def XXPERMX :
-    8RR_XX4Form_IMM3_XTABC6<34, 0, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
-                            vsrc:$XC, u3imm:$IMM),
-                            "xxpermx $XT, $XA, $XB, $XC, $IMM",
-                            IIC_VecPerm, []>;
-  def XXBLENDVB :
-    8RR_XX4Form_XTABC6<33, 0, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
-                       vsrc:$XC), "xxblendvb $XT, $XA, $XB, $XC",
-                       IIC_VecGeneral, []>;
-  def XXBLENDVH :
-    8RR_XX4Form_XTABC6<33, 1, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
-                       vsrc:$XC), "xxblendvh $XT, $XA, $XB, $XC",
-                       IIC_VecGeneral, []>;
-  def XXBLENDVW :
-    8RR_XX4Form_XTABC6<33, 2, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
-                       vsrc:$XC), "xxblendvw $XT, $XA, $XB, $XC",
-                       IIC_VecGeneral, []>;
-  def XXBLENDVD :
-    8RR_XX4Form_XTABC6<33, 3, (outs vsrc:$XT), (ins vsrc:$XA, vsrc:$XB,
-                       vsrc:$XC), "xxblendvd $XT, $XA, $XB, $XC",
-                       IIC_VecGeneral, []>;
-}
-
 // XXSPLTIW/DP/32DX need extra flags to make sure the compiler does not attempt
 // to spill part of the instruction when the values are similar.
 let isReMaterializable = 1, isAsCheapAsAMove = 1, isMoveImm = 1, Predicates = [PrefixInstrs] in {
@@ -1406,10 +1407,12 @@ let isReMaterializable = 1, isAsCheapAsAMove = 1, isMoveImm = 1, Predicates = [P
 
 let Predicates = [IsISA3_1] in {
   def SETBC : XForm_XT5_BI5<31, 384, (outs gprc:$RST), (ins crbitrc:$BI),
-                            "setbc $RST, $BI", IIC_IntCompare, []>,
+                            "setbc $RST, $BI", IIC_IntCompare,
+                            [(set i32:$RST, (PPCsetbc i1:$BI))]>,
                             SExt32To64, ZExt32To64;
   def SETBCR : XForm_XT5_BI5<31, 416, (outs gprc:$RST), (ins crbitrc:$BI),
-                             "setbcr $RST, $BI", IIC_IntCompare, []>,
+                             "setbcr $RST, $BI", IIC_IntCompare,
+                             [(set i32:$RST, (PPCsetbcr i1:$BI))]>,
                              SExt32To64, ZExt32To64;
   def SETNBC : XForm_XT5_BI5<31, 448, (outs gprc:$RST), (ins crbitrc:$BI),
                              "setnbc $RST, $BI", IIC_IntCompare, []>,
@@ -2165,144 +2168,145 @@ let AddedComplexity = 400, Predicates = [IsISA3_1, HasVSX] in {
 class xxevalPattern <dag pattern, bits<8> imm> :
   Pat<(v4i32 pattern), (XXEVAL $vA, $vB, $vC, imm)> {}
 
-let AddedComplexity = 400, Predicates = [PrefixInstrs, HasP10Vector] in {
- def : Pat<(v4i32 (build_vector i32immNonAllOneNonZero:$A,
-                                i32immNonAllOneNonZero:$A,
-                                i32immNonAllOneNonZero:$A,
-                                i32immNonAllOneNonZero:$A)),
-           (v4i32 (XXSPLTIW imm:$A))>;
- def : Pat<(f32 nzFPImmAsi32:$A),
-           (COPY_TO_REGCLASS (XXSPLTIDP (getFPAs32BitInt fpimm:$A)),
-                             VSFRC)>;
- def : Pat<(f64 nzFPImmAsi32:$A),
-           (COPY_TO_REGCLASS (XXSPLTIDP (getFPAs32BitInt fpimm:$A)),
-                             VSFRC)>;
-
-// To replace constant pool with XXSPLTI32DX for scalars.
-def : Pat<(f32 nzFPImmAsi64:$A),
-          (COPY_TO_REGCLASS (XXSPLTI32DX (XXSPLTI32DX(IMPLICIT_DEF), 0,
-                                        (getFPAs64BitIntHi $A)),
-                                        1, (getFPAs64BitIntLo $A)),
-                            VSSRC)>;
-
-def : Pat<(f64 nzFPImmAsi64:$A),
-          (COPY_TO_REGCLASS (XXSPLTI32DX (XXSPLTI32DX (IMPLICIT_DEF), 0,
-                                        (getFPAs64BitIntHi $A)),
-                                        1, (getFPAs64BitIntLo $A)),
-                            VSFRC)>;
-
-  // Anonymous patterns for XXEVAL
-  // AND
-  // and(A, B, C)
-  def : xxevalPattern<(and v4i32:$vA, (and v4i32:$vB, v4i32:$vC)), 1>;
-  // and(A, xor(B, C))
-  def : xxevalPattern<(and v4i32:$vA, (xor v4i32:$vB, v4i32:$vC)), 6>;
-  // and(A, or(B, C))
-  def : xxevalPattern<(and v4i32:$vA, (or v4i32:$vB, v4i32:$vC)), 7>;
-  // and(A, nor(B, C))
-  def : xxevalPattern<(and v4i32:$vA, (vnot (or v4i32:$vB, v4i32:$vC))), 8>;
-  // and(A, eqv(B, C))
-  def : xxevalPattern<(and v4i32:$vA, (vnot (xor v4i32:$vB, v4i32:$vC))), 9>;
-  // and(A, nand(B, C))
-  def : xxevalPattern<(and v4i32:$vA, (vnot (and v4i32:$vB, v4i32:$vC))), 14>;
-
-  // NAND
-  // nand(A, B, C)
-  def : xxevalPattern<(vnot (and v4i32:$vA, (and v4i32:$vB, v4i32:$vC))),
-                       !sub(255, 1)>;
-  // nand(A, xor(B, C))
-  def : xxevalPattern<(vnot (and v4i32:$vA, (xor v4i32:$vB, v4i32:$vC))),
-                       !sub(255, 6)>;
-  // nand(A, or(B, C))
-  def : xxevalPattern<(vnot (and v4i32:$vA, (or v4i32:$vB, v4i32:$vC))),
-                       !sub(255, 7)>;
-  // nand(A, nor(B, C))
-  def : xxevalPattern<(or (vnot v4i32:$vA), (or v4i32:$vB, v4i32:$vC)),
-                       !sub(255, 8)>;
-  // nand(A, eqv(B, C))
-  def : xxevalPattern<(or (vnot v4i32:$vA), (xor v4i32:$vB, v4i32:$vC)),
-                       !sub(255, 9)>;
-  // nand(A, nand(B, C))
-  def : xxevalPattern<(or (vnot v4i32:$vA), (and v4i32:$vB, v4i32:$vC)),
-                       !sub(255, 14)>;
-
-  // EQV
-  // (eqv A, B, C)
-  def : xxevalPattern<(or (and v4i32:$vA, (and v4i32:$vB, v4i32:$vC)),
-                          (vnot (or v4i32:$vA, (or v4i32:$vB, v4i32:$vC)))),
-                       150>;
-  // (eqv A, (and B, C))
-  def : xxevalPattern<(vnot (xor v4i32:$vA, (and v4i32:$vB, v4i32:$vC))), 225>;
-  // (eqv A, (or B, C))
-  def : xxevalPattern<(vnot (xor v4i32:$vA, (or v4i32:$vB, v4i32:$vC))), 135>;
-
-  // NOR
-  // (nor A, B, C)
-  def : xxevalPattern<(vnot (or v4i32:$vA, (or v4i32:$vB, v4i32:$vC))), 128>;
-  // (nor A, (and B, C))
-  def : xxevalPattern<(vnot (or v4i32:$vA, (and v4i32:$vB, v4i32:$vC))), 224>;
-  // (nor A, (eqv B, C))
-  def : xxevalPattern<(and (vnot v4i32:$vA), (xor v4i32:$vB, v4i32:$vC)), 96>;
-  // (nor A, (nand B, C))
-  def : xxevalPattern<(and (vnot v4i32:$vA), (and v4i32:$vB, v4i32:$vC)), 16>;
-  // (nor A, (nor B, C))
-  def : xxevalPattern<(and (vnot v4i32:$vA), (or v4i32:$vB, v4i32:$vC)), 112>;
-  // (nor A, (xor B, C))
-  def : xxevalPattern<(vnot (or v4i32:$vA, (xor v4i32:$vB, v4i32:$vC))), 144>;
-
-  // OR
-  // (or A, B, C)
-  def : xxevalPattern<(or v4i32:$vA, (or v4i32:$vB, v4i32:$vC)), 127>;
-  // (or A, (and B, C))
-  def : xxevalPattern<(or v4i32:$vA, (and v4i32:$vB, v4i32:$vC)), 31>;
-  // (or A, (eqv B, C))
-  def : xxevalPattern<(or v4i32:$vA, (vnot (xor v4i32:$vB, v4i32:$vC))), 159>;
-  // (or A, (nand B, C))
-  def : xxevalPattern<(or v4i32:$vA, (vnot (and v4i32:$vB, v4i32:$vC))), 239>;
-  // (or A, (nor B, C))
-  def : xxevalPattern<(or v4i32:$vA, (vnot (or v4i32:$vB, v4i32:$vC))), 143>;
-  // (or A, (xor B, C))
-  def : xxevalPattern<(or v4i32:$vA, (xor v4i32:$vB, v4i32:$vC)), 111>;
-
-  // XOR
-  // (xor A, B, C)
-  def : xxevalPattern<(xor v4i32:$vA, (xor v4i32:$vB, v4i32:$vC)), 105>;
-  // (xor A, (and B, C))
-  def : xxevalPattern<(xor v4i32:$vA, (and v4i32:$vB, v4i32:$vC)), 30>;
-  // (xor A, (or B, C))
-  def : xxevalPattern<(xor v4i32:$vA, (or v4i32:$vB, v4i32:$vC)), 120>;
-
-  // Anonymous patterns to select prefixed VSX loads and stores.
-  // Load / Store f128
-  def : Pat<(f128 (load PDForm:$src)),
-            (COPY_TO_REGCLASS (PLXV memri34:$src), VRRC)>;
-  def : Pat<(store f128:$XS, PDForm:$dst),
-            (PSTXV (COPY_TO_REGCLASS $XS, VSRC), memri34:$dst)>;
-
-  // Load / Store v4i32
-  def : Pat<(v4i32 (load PDForm:$src)), (PLXV memri34:$src)>;
-  def : Pat<(store v4i32:$XS, PDForm:$dst), (PSTXV $XS, memri34:$dst)>;
-
-  // Load / Store v2i64
-  def : Pat<(v2i64 (load PDForm:$src)), (PLXV memri34:$src)>;
-  def : Pat<(store v2i64:$XS, PDForm:$dst), (PSTXV $XS, memri34:$dst)>;
-
-  // Load / Store v4f32
-  def : Pat<(v4f32 (load PDForm:$src)), (PLXV memri34:$src)>;
-  def : Pat<(store v4f32:$XS, PDForm:$dst), (PSTXV $XS, memri34:$dst)>;
-
-  // Load / Store v2f64
-  def : Pat<(v2f64 (load PDForm:$src)), (PLXV memri34:$src)>;
-  def : Pat<(store v2f64:$XS, PDForm:$dst), (PSTXV $XS, memri34:$dst)>;
-
-  // Cases For PPCstore_scal_int_from_vsr
-  def : Pat<(PPCstore_scal_int_from_vsr f64:$src, PDForm:$dst, 8),
-            (PSTXSD $src, PDForm:$dst)>;
-  def : Pat<(PPCstore_scal_int_from_vsr f128:$src, PDForm:$dst, 8),
-            (PSTXSD (COPY_TO_REGCLASS $src, VFRC), PDForm:$dst)>;
-}
-
 let Predicates = [PrefixInstrs, HasP10Vector] in {
+  let AddedComplexity = 400 in {
+    def : Pat<(v4i32 (build_vector i32immNonAllOneNonZero:$A,
+				   i32immNonAllOneNonZero:$A,
+                                   i32immNonAllOneNonZero:$A,
+                                   i32immNonAllOneNonZero:$A)),
+              (v4i32 (XXSPLTIW imm:$A))>;
+    def : Pat<(f32 nzFPImmAsi32:$A),
+              (COPY_TO_REGCLASS (XXSPLTIDP (getFPAs32BitInt fpimm:$A)),
+                              VSFRC)>;
+    def : Pat<(f64 nzFPImmAsi32:$A),
+              (COPY_TO_REGCLASS (XXSPLTIDP (getFPAs32BitInt fpimm:$A)),
+                              VSFRC)>;
+
+    // To replace constant pool with XXSPLTI32DX for scalars.
+    def : Pat<(f32 nzFPImmAsi64:$A),
+              (COPY_TO_REGCLASS (XXSPLTI32DX (XXSPLTI32DX(IMPLICIT_DEF), 0,
+                                             (getFPAs64BitIntHi $A)),
+                                             1, (getFPAs64BitIntLo $A)),
+                                VSSRC)>;
+
+    def : Pat<(f64 nzFPImmAsi64:$A),
+              (COPY_TO_REGCLASS (XXSPLTI32DX (XXSPLTI32DX (IMPLICIT_DEF), 0,
+                                             (getFPAs64BitIntHi $A)),
+                                             1, (getFPAs64BitIntLo $A)),
+                                 VSFRC)>;
+
+    // Anonymous patterns for XXEVAL
+    // AND
+    // and(A, B, C)
+    def : xxevalPattern<(and v4i32:$vA, (and v4i32:$vB, v4i32:$vC)), 1>;
+    // and(A, xor(B, C))
+    def : xxevalPattern<(and v4i32:$vA, (xor v4i32:$vB, v4i32:$vC)), 6>;
+    // and(A, or(B, C))
+    def : xxevalPattern<(and v4i32:$vA, (or v4i32:$vB, v4i32:$vC)), 7>;
+    // and(A, nor(B, C))
+    def : xxevalPattern<(and v4i32:$vA, (vnot (or v4i32:$vB, v4i32:$vC))), 8>;
+    // and(A, eqv(B, C))
+    def : xxevalPattern<(and v4i32:$vA, (vnot (xor v4i32:$vB, v4i32:$vC))), 9>;
+    // and(A, nand(B, C))
+    def : xxevalPattern<(and v4i32:$vA, (vnot (and v4i32:$vB, v4i32:$vC))), 14>;
+
+    // NAND
+    // nand(A, B, C)
+    def : xxevalPattern<(vnot (and v4i32:$vA, (and v4i32:$vB, v4i32:$vC))),
+                         !sub(255, 1)>;
+    // nand(A, xor(B, C))
+    def : xxevalPattern<(vnot (and v4i32:$vA, (xor v4i32:$vB, v4i32:$vC))),
+                         !sub(255, 6)>;
+    // nand(A, or(B, C))
+    def : xxevalPattern<(vnot (and v4i32:$vA, (or v4i32:$vB, v4i32:$vC))),
+                         !sub(255, 7)>;
+    // nand(A, nor(B, C))
+    def : xxevalPattern<(or (vnot v4i32:$vA), (or v4i32:$vB, v4i32:$vC)),
+                         !sub(255, 8)>;
+    // nand(A, eqv(B, C))
+    def : xxevalPattern<(or (vnot v4i32:$vA), (xor v4i32:$vB, v4i32:$vC)),
+                         !sub(255, 9)>;
+    // nand(A, nand(B, C))
+    def : xxevalPattern<(or (vnot v4i32:$vA), (and v4i32:$vB, v4i32:$vC)),
+                         !sub(255, 14)>;
+
+    // EQV
+    // (eqv A, B, C)
+    def : xxevalPattern<(or (and v4i32:$vA, (and v4i32:$vB, v4i32:$vC)),
+                            (vnot (or v4i32:$vA, (or v4i32:$vB, v4i32:$vC)))),
+                         150>;
+    // (eqv A, (and B, C))
+    def : xxevalPattern<(vnot (xor v4i32:$vA, (and v4i32:$vB, v4i32:$vC))), 225>;
+    // (eqv A, (or B, C))
+    def : xxevalPattern<(vnot (xor v4i32:$vA, (or v4i32:$vB, v4i32:$vC))), 135>;
+
+    // NOR
+    // (nor A, B, C)
+    def : xxevalPattern<(vnot (or v4i32:$vA, (or v4i32:$vB, v4i32:$vC))), 128>;
+    // (nor A, (and B, C))
+    def : xxevalPattern<(vnot (or v4i32:$vA, (and v4i32:$vB, v4i32:$vC))), 224>;
+    // (nor A, (eqv B, C))
+    def : xxevalPattern<(and (vnot v4i32:$vA), (xor v4i32:$vB, v4i32:$vC)), 96>;
+    // (nor A, (nand B, C))
+    def : xxevalPattern<(and (vnot v4i32:$vA), (and v4i32:$vB, v4i32:$vC)), 16>;
+    // (nor A, (nor B, C))
+    def : xxevalPattern<(and (vnot v4i32:$vA), (or v4i32:$vB, v4i32:$vC)), 112>;
+    // (nor A, (xor B, C))
+    def : xxevalPattern<(vnot (or v4i32:$vA, (xor v4i32:$vB, v4i32:$vC))), 144>;
+
+    // OR
+    // (or A, B, C)
+    def : xxevalPattern<(or v4i32:$vA, (or v4i32:$vB, v4i32:$vC)), 127>;
+    // (or A, (and B, C))
+    def : xxevalPattern<(or v4i32:$vA, (and v4i32:$vB, v4i32:$vC)), 31>;
+    // (or A, (eqv B, C))
+    def : xxevalPattern<(or v4i32:$vA, (vnot (xor v4i32:$vB, v4i32:$vC))), 159>;
+    // (or A, (nand B, C))
+    def : xxevalPattern<(or v4i32:$vA, (vnot (and v4i32:$vB, v4i32:$vC))), 239>;
+    // (or A, (nor B, C))
+    def : xxevalPattern<(or v4i32:$vA, (vnot (or v4i32:$vB, v4i32:$vC))), 143>;
+    // (or A, (xor B, C))
+    def : xxevalPattern<(or v4i32:$vA, (xor v4i32:$vB, v4i32:$vC)), 111>;
+
+    // XOR
+    // (xor A, B, C)
+    def : xxevalPattern<(xor v4i32:$vA, (xor v4i32:$vB, v4i32:$vC)), 105>;
+    // (xor A, (and B, C))
+    def : xxevalPattern<(xor v4i32:$vA, (and v4i32:$vB, v4i32:$vC)), 30>;
+    // (xor A, (or B, C))
+    def : xxevalPattern<(xor v4i32:$vA, (or v4i32:$vB, v4i32:$vC)), 120>;
+
+    // Anonymous patterns to select prefixed VSX loads and stores.
+    // Load / Store f128
+    def : Pat<(f128 (load PDForm:$src)),
+              (COPY_TO_REGCLASS (PLXV memri34:$src), VRRC)>;
+    def : Pat<(store f128:$XS, PDForm:$dst),
+              (PSTXV (COPY_TO_REGCLASS $XS, VSRC), memri34:$dst)>;
+
+    // Load / Store v4i32
+    def : Pat<(v4i32 (load PDForm:$src)), (PLXV memri34:$src)>;
+    def : Pat<(store v4i32:$XS, PDForm:$dst), (PSTXV $XS, memri34:$dst)>;
+
+    // Load / Store v2i64
+    def : Pat<(v2i64 (load PDForm:$src)), (PLXV memri34:$src)>;
+    def : Pat<(store v2i64:$XS, PDForm:$dst), (PSTXV $XS, memri34:$dst)>;
+
+    // Load / Store v4f32
+    def : Pat<(v4f32 (load PDForm:$src)), (PLXV memri34:$src)>;
+    def : Pat<(store v4f32:$XS, PDForm:$dst), (PSTXV $XS, memri34:$dst)>;
+
+    // Load / Store v2f64
+    def : Pat<(v2f64 (load PDForm:$src)), (PLXV memri34:$src)>;
+    def : Pat<(store v2f64:$XS, PDForm:$dst), (PSTXV $XS, memri34:$dst)>;
+
+    // Cases For PPCstore_scal_int_from_vsr
+    def : Pat<(PPCstore_scal_int_from_vsr f64:$src, PDForm:$dst, 8),
+              (PSTXSD $src, PDForm:$dst)>;
+    def : Pat<(PPCstore_scal_int_from_vsr f128:$src, PDForm:$dst, 8),
+              (PSTXSD (COPY_TO_REGCLASS $src, VFRC), PDForm:$dst)>;
+    }
+
+
   def : Pat<(i32 imm34:$imm), (PLI (getImmAs64BitInt imm:$imm))>;
   def : Pat<(i64 imm34:$imm), (PLI8 (getImmAs64BitInt imm:$imm))>;
   def : Pat<(v16i8 (int_ppc_vsx_xxpermx v16i8:$A, v16i8:$B, v16i8:$C, timm:$D)),
@@ -2360,6 +2364,18 @@ let Predicates = [PrefixInstrs] in {
   def : Pat<(truncstorei16 i64:$rS, PDForm:$dst), (PSTH8 g8rc:$rS, memri34:$dst)>;
   def : Pat<(truncstorei32 i64:$rS, PDForm:$dst), (PSTW8 g8rc:$rS, memri34:$dst)>;
   def : Pat<(store i64:$rS, PDForm:$dst), (PSTD g8rc:$rS, memri34:$dst)>;
+
+  // Atomic Load
+  def : Pat<(i32 (atomic_load_8 PDForm:$src)), (PLBZ memri34:$src)>;
+  def : Pat<(i32 (atomic_load_16 PDForm:$src)), (PLHZ memri34:$src)>;
+  def : Pat<(i32 (atomic_load_32 PDForm:$src)), (PLWZ memri34:$src)>;
+  def : Pat<(i64 (atomic_load_64 PDForm:$src)), (PLD memri34:$src)>;
+
+  // Atomic Store
+  def : Pat<(atomic_store_8 i32:$RS, PDForm:$dst), (PSTB $RS, memri34:$dst)>;
+  def : Pat<(atomic_store_16 i32:$RS, PDForm:$dst), (PSTH $RS, memri34:$dst)>;
+  def : Pat<(atomic_store_32 i32:$RS, PDForm:$dst), (PSTW $RS, memri34:$dst)>;
+  def : Pat<(atomic_store_64 i64:$RS, PDForm:$dst), (PSTD $RS, memri34:$dst)>;
 }
 
 let Predicates = [PrefixInstrs, HasFPU] in {
@@ -2376,20 +2392,6 @@ let Predicates = [PrefixInstrs, HasFPU] in {
   def : Pat<(v4f32 (PPCldvsxlh PDForm:$src)),
             (SUBREG_TO_REG (i64 1), (PLFD PDForm:$src), sub_64)>;
 
-}
-
-let Predicates = [PrefixInstrs] in {
-  // Atomic Load
-  def : Pat<(i32 (atomic_load_8 PDForm:$src)), (PLBZ memri34:$src)>;
-  def : Pat<(i32 (atomic_load_16 PDForm:$src)), (PLHZ memri34:$src)>;
-  def : Pat<(i32 (atomic_load_32 PDForm:$src)), (PLWZ memri34:$src)>;
-  def : Pat<(i64 (atomic_load_64 PDForm:$src)), (PLD memri34:$src)>;
-
-  // Atomic Store
-  def : Pat<(atomic_store_8 i32:$RS, PDForm:$dst), (PSTB $RS, memri34:$dst)>;
-  def : Pat<(atomic_store_16 i32:$RS, PDForm:$dst), (PSTH $RS, memri34:$dst)>;
-  def : Pat<(atomic_store_32 i32:$RS, PDForm:$dst), (PSTW $RS, memri34:$dst)>;
-  def : Pat<(atomic_store_64 i64:$RS, PDForm:$dst), (PSTD $RS, memri34:$dst)>;
 }
 
 def InsertEltShift {
@@ -2516,7 +2518,7 @@ let Predicates = [IsISA3_1, PrefixInstrs], isAsmParserOnly = 1, hasNoSchedulingI
   let Interpretation64Bit = 1 in {
     def PLA8 : MLS_DForm_SI34_RT5<14, (outs g8rc:$RT),
                                   (ins g8rc_nox0:$RA, s34imm:$SI),
-                                  "pla $RT, ${SI} ${RA}", IIC_IntSimple, []>;
+                                  "pla $RT, ${SI} ${RA}", IIC_IntSimple, []>, MemriOp;
     def PLA8pc : MLS_DForm_SI34_RT5<14, (outs g8rc:$RT),
                                     (ins s34imm_pcrel:$SI),
                                     "pla $RT, $SI", IIC_IntSimple, []>, isPCRel;
@@ -2527,7 +2529,7 @@ let Predicates = [IsISA3_1, PrefixInstrs], isAsmParserOnly = 1, hasNoSchedulingI
 
   def PLA : MLS_DForm_SI34_RT5<14, (outs gprc:$RT),
                                (ins gprc_nor0:$RA, s34imm:$SI),
-                               "pla $RT, ${SI} ${RA}", IIC_IntSimple, []>;
+                               "pla $RT, ${SI} ${RA}", IIC_IntSimple, []>, MemriOp;
   def PLApc : MLS_DForm_SI34_RT5<14, (outs gprc:$RT),
                                  (ins s34imm_pcrel:$SI),
                                  "pla $RT, $SI", IIC_IntSimple, []>, isPCRel;

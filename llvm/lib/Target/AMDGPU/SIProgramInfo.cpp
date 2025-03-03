@@ -27,6 +27,8 @@ void SIProgramInfo::reset(const MachineFunction &MF) {
 
   const MCExpr *ZeroExpr = MCConstantExpr::create(0, Ctx);
 
+  CodeSizeInBytes.reset();
+
   VGPRBlocks = ZeroExpr;
   SGPRBlocks = ZeroExpr;
   Priority = 0;
@@ -161,45 +163,6 @@ static const MCExpr *MaskShift(const MCExpr *Val, uint32_t Mask, uint32_t Shift,
   return Val;
 }
 
-uint64_t SIProgramInfo::getComputePGMRSrc1(const GCNSubtarget &ST) const {
-  int64_t VBlocks, SBlocks;
-  VGPRBlocks->evaluateAsAbsolute(VBlocks);
-  SGPRBlocks->evaluateAsAbsolute(SBlocks);
-
-  uint64_t Reg = S_00B848_VGPRS(static_cast<uint64_t>(VBlocks)) |
-                 S_00B848_SGPRS(static_cast<uint64_t>(SBlocks)) |
-                 getComputePGMRSrc1Reg(*this, ST);
-
-  return Reg;
-}
-
-uint64_t SIProgramInfo::getPGMRSrc1(CallingConv::ID CC,
-                                    const GCNSubtarget &ST) const {
-  if (AMDGPU::isCompute(CC)) {
-    return getComputePGMRSrc1(ST);
-  }
-  int64_t VBlocks, SBlocks;
-  VGPRBlocks->evaluateAsAbsolute(VBlocks);
-  SGPRBlocks->evaluateAsAbsolute(SBlocks);
-
-  return getPGMRSrc1Reg(*this, CC, ST) |
-         S_00B848_VGPRS(static_cast<uint64_t>(VBlocks)) |
-         S_00B848_SGPRS(static_cast<uint64_t>(SBlocks));
-}
-
-uint64_t SIProgramInfo::getComputePGMRSrc2() const {
-  int64_t ScratchEn;
-  ScratchEnable->evaluateAsAbsolute(ScratchEn);
-  return ScratchEn | getComputePGMRSrc2Reg(*this);
-}
-
-uint64_t SIProgramInfo::getPGMRSrc2(CallingConv::ID CC) const {
-  if (AMDGPU::isCompute(CC))
-    return getComputePGMRSrc2();
-
-  return 0;
-}
-
 const MCExpr *SIProgramInfo::getComputePGMRSrc1(const GCNSubtarget &ST,
                                                 MCContext &Ctx) const {
   uint64_t Reg = getComputePGMRSrc1Reg(*this, ST);
@@ -237,4 +200,34 @@ const MCExpr *SIProgramInfo::getPGMRSrc2(CallingConv::ID CC,
     return getComputePGMRSrc2(Ctx);
 
   return MCConstantExpr::create(0, Ctx);
+}
+
+uint64_t SIProgramInfo::getFunctionCodeSize(const MachineFunction &MF) {
+  if (CodeSizeInBytes.has_value())
+    return *CodeSizeInBytes;
+
+  const GCNSubtarget &STM = MF.getSubtarget<GCNSubtarget>();
+  const SIInstrInfo *TII = STM.getInstrInfo();
+
+  uint64_t CodeSize = 0;
+
+  for (const MachineBasicBlock &MBB : MF) {
+    // The amount of padding to align code can be both underestimated and
+    // overestimated. In case of inline asm used getInstSizeInBytes() will
+    // return a maximum size of a single instruction, where the real size may
+    // differ. At this point CodeSize may be already off.
+    CodeSize = alignTo(CodeSize, MBB.getAlignment());
+
+    for (const MachineInstr &MI : MBB) {
+      // TODO: CodeSize should account for multiple functions.
+
+      if (MI.isMetaInstruction())
+        continue;
+
+      CodeSize += TII->getInstSizeInBytes(MI);
+    }
+  }
+
+  CodeSizeInBytes = CodeSize;
+  return CodeSize;
 }

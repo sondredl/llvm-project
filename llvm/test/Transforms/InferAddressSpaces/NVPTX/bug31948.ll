@@ -9,13 +9,13 @@ target datalayout = "e-i64:64-v16:16-v32:32-n16:32:64"
 
 define void @bug31948(float %a, ptr nocapture readnone %x, ptr nocapture readnone %y) local_unnamed_addr #0 {
 ; CHECK-LABEL: define void @bug31948(
-; CHECK-SAME: float [[A:%.*]], ptr nocapture readnone [[X:%.*]], ptr nocapture readnone [[Y:%.*]]) local_unnamed_addr #[[ATTR0:[0-9]+]] {
+; CHECK-SAME: float [[A:%.*]], ptr readnone captures(none) [[X:%.*]], ptr readnone captures(none) [[Y:%.*]]) local_unnamed_addr #[[ATTR0:[0-9]+]] {
 ; CHECK-NEXT:  [[ENTRY:.*:]]
-; CHECK-NEXT:    [[TMP:%.*]] = load ptr, ptr addrspace(3) getelementptr inbounds ([[STRUCT_BAR:%.*]], ptr addrspace(3) @var1, i64 0, i32 1), align 8
+; CHECK-NEXT:    [[TMP:%.*]] = load ptr, ptr addrspace(3) getelementptr ([[STRUCT_BAR:%.*]], ptr addrspace(3) @var1, i64 0, i32 1), align 8
 ; CHECK-NEXT:    [[TMP1:%.*]] = load float, ptr [[TMP]], align 4
 ; CHECK-NEXT:    [[CONV1:%.*]] = fadd float [[TMP1]], 1.000000e+00
 ; CHECK-NEXT:    store float [[CONV1]], ptr [[TMP]], align 4
-; CHECK-NEXT:    store i32 32, ptr addrspace(3) getelementptr inbounds ([[STRUCT_BAR]], ptr addrspace(3) @var1, i64 0, i32 1), align 4
+; CHECK-NEXT:    store i32 32, ptr addrspace(3) getelementptr ([[STRUCT_BAR]], ptr addrspace(3) @var1, i64 0, i32 1), align 4
 ; CHECK-NEXT:    ret void
 ;
 entry:

@@ -556,10 +556,6 @@ public:
 
 private:
   // Visitors to walk an AST and construct the CFG.
-  CFGBlock *VisitCXXDefaultArgExpr(CXXDefaultArgExpr *Default,
-                                   AddStmtChoice asc);
-  CFGBlock *VisitCXXDefaultInitExpr(CXXDefaultInitExpr *Default,
-                                    AddStmtChoice asc);
   CFGBlock *VisitInitListExpr(InitListExpr *ILE, AddStmtChoice asc);
   CFGBlock *VisitAddrLabelExpr(AddrLabelExpr *A, AddStmtChoice asc);
   CFGBlock *VisitAttributedStmt(AttributedStmt *A, AddStmtChoice asc);
@@ -764,6 +760,7 @@ private:
   void cleanupConstructionContext(Expr *E);
 
   void autoCreateBlock() { if (!Block) Block = createBlock(); }
+
   CFGBlock *createBlock(bool add_successor = true);
   CFGBlock *createNoReturnBlock();
 
@@ -822,15 +819,21 @@ private:
     B->appendStmt(const_cast<Stmt*>(S), cfg->getBumpVectorContext());
   }
 
-  void appendConstructor(CFGBlock *B, CXXConstructExpr *CE) {
+  void appendConstructor(CXXConstructExpr *CE) {
+    CXXConstructorDecl *C = CE->getConstructor();
+    if (C && C->isNoReturn())
+      Block = createNoReturnBlock();
+    else
+      autoCreateBlock();
+
     if (const ConstructionContext *CC =
             retrieveAndCleanupConstructionContext(CE)) {
-      B->appendConstructor(CE, CC, cfg->getBumpVectorContext());
+      Block->appendConstructor(CE, CC, cfg->getBumpVectorContext());
       return;
     }
 
     // No valid construction context found. Fall back to statement.
-    B->appendStmt(CE, cfg->getBumpVectorContext());
+    Block->appendStmt(CE, cfg->getBumpVectorContext());
   }
 
   void appendCall(CFGBlock *B, CallExpr *CE) {
@@ -2038,6 +2041,8 @@ void CFGBuilder::addImplicitDtorsForDestructor(const CXXDestructorDecl *DD) {
   }
 
   // First destroy member objects.
+  if (RD->isUnion())
+    return;
   for (auto *FI : RD->fields()) {
     // Check for constant size array. Set type to array element type.
     QualType QT = FI->getType();
@@ -2258,10 +2263,16 @@ CFGBlock *CFGBuilder::Visit(Stmt * S, AddStmtChoice asc,
                                    asc, ExternallyDestructed);
 
     case Stmt::CXXDefaultArgExprClass:
-      return VisitCXXDefaultArgExpr(cast<CXXDefaultArgExpr>(S), asc);
-
     case Stmt::CXXDefaultInitExprClass:
-      return VisitCXXDefaultInitExpr(cast<CXXDefaultInitExpr>(S), asc);
+      // FIXME: The expression inside a CXXDefaultArgExpr is owned by the
+      // called function's declaration, not by the caller. If we simply add
+      // this expression to the CFG, we could end up with the same Expr
+      // appearing multiple times (PR13385).
+      //
+      // It's likewise possible for multiple CXXDefaultInitExprs for the same
+      // expression to be used in the same function (through aggregate
+      // initialization).
+      return VisitStmt(S, asc);
 
     case Stmt::CXXBindTemporaryExprClass:
       return VisitCXXBindTemporaryExpr(cast<CXXBindTemporaryExpr>(S), asc);
@@ -2429,40 +2440,6 @@ CFGBlock *CFGBuilder::VisitChildren(Stmt *S) {
         B = R;
   }
   return B;
-}
-
-CFGBlock *CFGBuilder::VisitCXXDefaultArgExpr(CXXDefaultArgExpr *Arg,
-                                             AddStmtChoice asc) {
-  if (Arg->hasRewrittenInit()) {
-    if (asc.alwaysAdd(*this, Arg)) {
-      autoCreateBlock();
-      appendStmt(Block, Arg);
-    }
-    return VisitStmt(Arg->getExpr(), asc);
-  }
-
-  // We can't add the default argument if it's not rewritten because the
-  // expression inside a CXXDefaultArgExpr is owned by the called function's
-  // declaration, not by the caller, we could end up with the same expression
-  // appearing multiple times.
-  return VisitStmt(Arg, asc);
-}
-
-CFGBlock *CFGBuilder::VisitCXXDefaultInitExpr(CXXDefaultInitExpr *Init,
-                                              AddStmtChoice asc) {
-  if (Init->hasRewrittenInit()) {
-    if (asc.alwaysAdd(*this, Init)) {
-      autoCreateBlock();
-      appendStmt(Block, Init);
-    }
-    return VisitStmt(Init->getExpr(), asc);
-  }
-
-  // We can't add the default initializer if it's not rewritten because multiple
-  // CXXDefaultInitExprs for the same sub-expression to be used in the same
-  // function (through aggregate initialization). we could end up with the same
-  // expression appearing multiple times.
-  return VisitStmt(Init, asc);
 }
 
 CFGBlock *CFGBuilder::VisitInitListExpr(InitListExpr *ILE, AddStmtChoice asc) {
@@ -3209,10 +3186,13 @@ CFGBlock *CFGBuilder::VisitIfStmt(IfStmt *I) {
     if (!I->isConsteval())
       KnownVal = tryEvaluateBool(I->getCond());
 
-    // Add the successors.  If we know that specific branches are
+    // Add the successors. If we know that specific branches are
     // unreachable, inform addSuccessor() of that knowledge.
     addSuccessor(Block, ThenBlock, /* IsReachable = */ !KnownVal.isFalse());
     addSuccessor(Block, ElseBlock, /* IsReachable = */ !KnownVal.isTrue());
+
+    if (I->isConsteval())
+      return Block;
 
     // Add the condition as the last statement in the new block.  This may
     // create new blocks as the condition may contain control-flow.  Any newly
@@ -4861,9 +4841,7 @@ CFGBlock *CFGBuilder::VisitCXXConstructExpr(CXXConstructExpr *C,
   // construct these objects. Construction contexts we find here aren't for the
   // constructor C, they're for its arguments only.
   findConstructionContextsForArguments(C);
-
-  autoCreateBlock();
-  appendConstructor(Block, C);
+  appendConstructor(C);
 
   return VisitChildren(C);
 }
@@ -4921,16 +4899,15 @@ CFGBlock *CFGBuilder::VisitCXXFunctionalCastExpr(CXXFunctionalCastExpr *E,
   return Visit(E->getSubExpr(), asc);
 }
 
-CFGBlock *CFGBuilder::VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *C,
+CFGBlock *CFGBuilder::VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *E,
                                                   AddStmtChoice asc) {
   // If the constructor takes objects as arguments by value, we need to properly
   // construct these objects. Construction contexts we find here aren't for the
   // constructor C, they're for its arguments only.
-  findConstructionContextsForArguments(C);
+  findConstructionContextsForArguments(E);
+  appendConstructor(E);
 
-  autoCreateBlock();
-  appendConstructor(Block, C);
-  return VisitChildren(C);
+  return VisitChildren(E);
 }
 
 CFGBlock *CFGBuilder::VisitImplicitCastExpr(ImplicitCastExpr *E,
@@ -6196,7 +6173,7 @@ void CFGBlock::printTerminatorJson(raw_ostream &Out, const LangOptions &LO,
 
   printTerminator(TempOut, LO);
 
-  Out << JsonFormat(TempOut.str(), AddQuotes);
+  Out << JsonFormat(Buf, AddQuotes);
 }
 
 // Returns true if by simply looking at the block, we can be sure that it
@@ -6377,10 +6354,9 @@ struct DOTGraphTraits<const CFG*> : public DefaultDOTGraphTraits {
   DOTGraphTraits(bool isSimple = false) : DefaultDOTGraphTraits(isSimple) {}
 
   static std::string getNodeLabel(const CFGBlock *Node, const CFG *Graph) {
-    std::string OutSStr;
-    llvm::raw_string_ostream Out(OutSStr);
+    std::string OutStr;
+    llvm::raw_string_ostream Out(OutStr);
     print_block(Out,Graph, *Node, *GraphHelper, false, false);
-    std::string& OutStr = Out.str();
 
     if (OutStr[0] == '\n') OutStr.erase(OutStr.begin());
 

@@ -67,8 +67,10 @@ public:
   bool GetDebugInfoHadFrameVariableErrors() const override;
   void SetDebugInfoHadFrameVariableErrors() override;
 
+  SymbolFileDWARF *GetDIERefSymbolFile(const DIERef &die_ref) override;
+
 protected:
-  DIEToTypePtr &GetDIEToType() override;
+  llvm::DenseMap<const DWARFDebugInfoEntry *, Type *> &GetDIEToType() override;
 
   DIEToVariableSP &GetDIEToVariable() override;
 
@@ -77,8 +79,7 @@ protected:
 
   UniqueDWARFASTTypeMap &GetUniqueDWARFASTTypeMap() override;
 
-  lldb::TypeSP
-  FindDefinitionTypeForDWARFDeclContext(const DWARFDIE &die) override;
+  DWARFDIE FindDefinitionDIE(const DWARFDIE &die) override;
 
   lldb::TypeSP
   FindCompleteObjCDefinitionTypeForDIE(const DWARFDIE &die,

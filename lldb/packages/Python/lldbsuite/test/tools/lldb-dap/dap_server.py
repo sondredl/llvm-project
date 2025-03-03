@@ -171,13 +171,15 @@ class DebugCommunication(object):
         self.output_condition.release()
         return output
 
-    def collect_output(self, category, duration, clear=True):
-        end_time = time.time() + duration
+    def collect_output(self, category, timeout_secs, pattern, clear=True):
+        end_time = time.time() + timeout_secs
         collected_output = ""
         while end_time > time.time():
             output = self.get_output(category, timeout=0.25, clear=clear)
             if output:
                 collected_output += output
+                if pattern is not None and pattern in output:
+                    break
         return collected_output if collected_output else None
 
     def enqueue_recv_packet(self, packet):
@@ -572,6 +574,8 @@ class DebugCommunication(object):
         coreFile=None,
         postRunCommands=None,
         sourceMap=None,
+        gdbRemotePort=None,
+        gdbRemoteHostname=None,
     ):
         args_dict = {}
         if pid is not None:
@@ -601,7 +605,33 @@ class DebugCommunication(object):
             args_dict["postRunCommands"] = postRunCommands
         if sourceMap:
             args_dict["sourceMap"] = sourceMap
+        if gdbRemotePort is not None:
+            args_dict["gdb-remote-port"] = gdbRemotePort
+        if gdbRemoteHostname is not None:
+            args_dict["gdb-remote-hostname"] = gdbRemoteHostname
         command_dict = {"command": "attach", "type": "request", "arguments": args_dict}
+        return self.send_recv(command_dict)
+
+    def request_breakpointLocations(
+        self, file_path, line, end_line=None, column=None, end_column=None
+    ):
+        (dir, base) = os.path.split(file_path)
+        source_dict = {"name": base, "path": file_path}
+        args_dict = {}
+        args_dict["source"] = source_dict
+        if line is not None:
+            args_dict["line"] = line
+        if end_line is not None:
+            args_dict["endLine"] = end_line
+        if column is not None:
+            args_dict["column"] = column
+        if end_column is not None:
+            args_dict["endColumn"] = end_column
+        command_dict = {
+            "command": "breakpointLocations",
+            "type": "request",
+            "arguments": args_dict,
+        }
         return self.send_recv(command_dict)
 
     def request_configurationDone(self):
@@ -683,6 +713,19 @@ class DebugCommunication(object):
         for inst in instructions:
             self.disassembled_instructions[inst["address"]] = inst
 
+    def request_readMemory(self, memoryReference, offset, count):
+        args_dict = {
+            "memoryReference": memoryReference,
+            "offset": offset,
+            "count": count,
+        }
+        command_dict = {
+            "command": "readMemory",
+            "type": "request",
+            "arguments": args_dict,
+        }
+        return self.send_recv(command_dict)
+
     def request_evaluate(self, expression, frameIndex=0, threadId=None, context=None):
         stackFrame = self.get_stackFrame(frameIndex=frameIndex, threadId=threadId)
         if stackFrame is None:
@@ -694,6 +737,17 @@ class DebugCommunication(object):
         }
         command_dict = {
             "command": "evaluate",
+            "type": "request",
+            "arguments": args_dict,
+        }
+        return self.send_recv(command_dict)
+
+    def request_exceptionInfo(self, threadId=None):
+        if threadId is None:
+            threadId = self.get_thread_id()
+        args_dict = {"threadId": threadId}
+        command_dict = {
+            "command": "exceptionInfo",
             "type": "request",
             "arguments": args_dict,
         }
@@ -746,6 +800,7 @@ class DebugCommunication(object):
         runInTerminal=False,
         postRunCommands=None,
         enableAutoVariableSummaries=False,
+        displayExtendedBacktrace=False,
         enableSyntheticChildDebugging=False,
         commandEscapePrefix=None,
         customFrameFormat=None,
@@ -760,8 +815,6 @@ class DebugCommunication(object):
             args_dict["env"] = env
         if stopOnEntry:
             args_dict["stopOnEntry"] = stopOnEntry
-        if disableASLR:
-            args_dict["disableASLR"] = disableASLR
         if disableSTDIO:
             args_dict["disableSTDIO"] = disableSTDIO
         if shellExpandArguments:
@@ -796,8 +849,10 @@ class DebugCommunication(object):
         if customThreadFormat:
             args_dict["customThreadFormat"] = customThreadFormat
 
+        args_dict["disableASLR"] = disableASLR
         args_dict["enableAutoVariableSummaries"] = enableAutoVariableSummaries
         args_dict["enableSyntheticChildDebugging"] = enableSyntheticChildDebugging
+        args_dict["displayExtendedBacktrace"] = displayExtendedBacktrace
         args_dict["commandEscapePrefix"] = commandEscapePrefix
         command_dict = {"command": "launch", "type": "request", "arguments": args_dict}
         response = self.send_recv(command_dict)
@@ -808,17 +863,23 @@ class DebugCommunication(object):
             self.wait_for_event(filter=["process", "initialized"])
         return response
 
-    def request_next(self, threadId):
+    def request_next(self, threadId, granularity="statement"):
         if self.exit_status is not None:
             raise ValueError("request_continue called after process exited")
-        args_dict = {"threadId": threadId}
+        args_dict = {"threadId": threadId, "granularity": granularity}
         command_dict = {"command": "next", "type": "request", "arguments": args_dict}
         return self.send_recv(command_dict)
 
-    def request_stepIn(self, threadId, targetId):
+    def request_stepIn(self, threadId, targetId, granularity="statement"):
         if self.exit_status is not None:
             raise ValueError("request_stepIn called after process exited")
-        args_dict = {"threadId": threadId, "targetId": targetId}
+        if threadId is None:
+            threadId = self.get_thread_id()
+        args_dict = {
+            "threadId": threadId,
+            "targetId": targetId,
+            "granularity": granularity,
+        }
         command_dict = {"command": "stepIn", "type": "request", "arguments": args_dict}
         return self.send_recv(command_dict)
 
@@ -866,7 +927,7 @@ class DebugCommunication(object):
             "sourceModified": False,
         }
         if line_array is not None:
-            args_dict["lines"] = "%s" % line_array
+            args_dict["lines"] = line_array
             breakpoints = []
             for i, line in enumerate(line_array):
                 breakpoint_data = None
@@ -874,18 +935,14 @@ class DebugCommunication(object):
                     breakpoint_data = data[i]
                 bp = {"line": line}
                 if breakpoint_data is not None:
-                    if "condition" in breakpoint_data and breakpoint_data["condition"]:
+                    if breakpoint_data.get("condition"):
                         bp["condition"] = breakpoint_data["condition"]
-                    if (
-                        "hitCondition" in breakpoint_data
-                        and breakpoint_data["hitCondition"]
-                    ):
+                    if breakpoint_data.get("hitCondition"):
                         bp["hitCondition"] = breakpoint_data["hitCondition"]
-                    if (
-                        "logMessage" in breakpoint_data
-                        and breakpoint_data["logMessage"]
-                    ):
+                    if breakpoint_data.get("logMessage"):
                         bp["logMessage"] = breakpoint_data["logMessage"]
+                    if breakpoint_data.get("column"):
+                        bp["column"] = breakpoint_data["column"]
                 breakpoints.append(bp)
             args_dict["breakpoints"] = breakpoints
 
@@ -968,7 +1025,7 @@ class DebugCommunication(object):
         return response
 
     def request_completions(self, text, frameId=None):
-        args_dict = {"text": text, "column": len(text)}
+        args_dict = {"text": text, "column": len(text) + 1}
         if frameId:
             args_dict["frameId"] = frameId
         command_dict = {
@@ -1010,6 +1067,19 @@ class DebugCommunication(object):
                             continue
                 print("[%3u] %s" % (idx, name))
         return response
+
+    def request_source(self, sourceReference):
+        """Request a source from a 'Source' reference."""
+        command_dict = {
+            "command": "source",
+            "type": "request",
+            "arguments": {
+                "source": {"sourceReference": sourceReference},
+                # legacy version of the request
+                "sourceReference": sourceReference,
+            },
+        }
+        return self.send_recv(command_dict)
 
     def request_threads(self):
         """Request a list of all threads and combine any information from any
@@ -1071,6 +1141,17 @@ class DebugCommunication(object):
         }
         return self.send_recv(command_dict)
 
+    def request_locations(self, locationReference):
+        args_dict = {
+            "locationReference": locationReference,
+        }
+        command_dict = {
+            "command": "locations",
+            "type": "request",
+            "arguments": args_dict,
+        }
+        return self.send_recv(command_dict)
+
     def request_testGetTargetBreakpoints(self):
         """A request packet used in the LLDB test suite to get all currently
         set breakpoint infos for all breakpoints currently set in the
@@ -1087,40 +1168,102 @@ class DebugCommunication(object):
         self.send.close()
         # self.recv.close()
 
+    def request_setInstructionBreakpoints(self, memory_reference=[]):
+        breakpoints = []
+        for i in memory_reference:
+            args_dict = {
+                "instructionReference": i,
+            }
+            breakpoints.append(args_dict)
+        args_dict = {"breakpoints": breakpoints}
+        command_dict = {
+            "command": "setInstructionBreakpoints",
+            "type": "request",
+            "arguments": args_dict,
+        }
+        return self.send_recv(command_dict)
+
 
 class DebugAdaptorServer(DebugCommunication):
     def __init__(
         self,
         executable=None,
-        port=None,
+        connection=None,
         init_commands=[],
         log_file=None,
         env=None,
     ):
         self.process = None
+        self.connection = None
         if executable is not None:
-            adaptor_env = os.environ.copy()
-            if env is not None:
-                adaptor_env.update(env)
-
-            if log_file:
-                adaptor_env["LLDBDAP_LOG"] = log_file
-            self.process = subprocess.Popen(
-                [executable],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=adaptor_env,
+            process, connection = DebugAdaptorServer.launch(
+                executable=executable, connection=connection, env=env, log_file=log_file
             )
+            self.process = process
+            self.connection = connection
+
+        if connection is not None:
+            scheme, address = connection.split("://")
+            if scheme == "unix-connect":  # unix-connect:///path
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.connect(address)
+            elif scheme == "connection":  # connection://[host]:port
+                host, port = address.rsplit(":", 1)
+                # create_connection with try both ipv4 and ipv6.
+                s = socket.create_connection((host.strip("[]"), int(port)))
+            else:
+                raise ValueError("invalid connection: {}".format(connection))
+            DebugCommunication.__init__(
+                self, s.makefile("rb"), s.makefile("wb"), init_commands, log_file
+            )
+            self.connection = connection
+        else:
             DebugCommunication.__init__(
                 self, self.process.stdout, self.process.stdin, init_commands, log_file
             )
-        elif port is not None:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect(("127.0.0.1", port))
-            DebugCommunication.__init__(
-                self, s.makefile("r"), s.makefile("w"), init_commands
+
+    @classmethod
+    def launch(cls, /, executable, env=None, log_file=None, connection=None):
+        adaptor_env = os.environ.copy()
+        if env is not None:
+            adaptor_env.update(env)
+
+        if log_file:
+            adaptor_env["LLDBDAP_LOG"] = log_file
+        args = [executable]
+
+        if connection is not None:
+            args.append("--connection")
+            args.append(connection)
+
+        process = subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=adaptor_env,
+        )
+
+        if connection is None:
+            return (process, None)
+
+        # lldb-dap will print the listening address once the listener is
+        # made to stdout. The listener is formatted like
+        # `connection://host:port` or `unix-connection:///path`.
+        expected_prefix = "Listening for: "
+        out = process.stdout.readline().decode()
+        if not out.startswith(expected_prefix):
+            self.process.kill()
+            raise ValueError(
+                "lldb-dap failed to print listening address, expected '{}', got '{}'".format(
+                    expected_prefix, out
+                )
             )
+
+        # If the listener expanded into multiple addresses, use the first.
+        connection = out.removeprefix(expected_prefix).rstrip("\r\n").split(",", 1)[0]
+
+        return (process, connection)
 
     def get_pid(self):
         if self.process:
@@ -1204,7 +1347,7 @@ def run_vscode(dbg, args, options):
 def main():
     parser = optparse.OptionParser(
         description=(
-            "A testing framework for the Visual Studio Code Debug " "Adaptor protocol"
+            "A testing framework for the Visual Studio Code Debug Adaptor protocol"
         )
     )
 
@@ -1287,10 +1430,9 @@ def main():
     )
 
     parser.add_option(
-        "--port",
-        type="int",
-        dest="port",
-        help="Attach a socket to a port instead of using STDIN for VSCode",
+        "--connection",
+        dest="connection",
+        help="Attach a socket connection of using STDIN for VSCode",
         default=None,
     )
 
@@ -1436,15 +1578,16 @@ def main():
 
     (options, args) = parser.parse_args(sys.argv[1:])
 
-    if options.vscode_path is None and options.port is None:
+    if options.vscode_path is None and options.connection is None:
         print(
             "error: must either specify a path to a Visual Studio Code "
             "Debug Adaptor vscode executable path using the --vscode "
-            "option, or a port to attach to for an existing lldb-dap "
-            "using the --port option"
+            "option, or using the --connection option"
         )
         return
-    dbg = DebugAdaptorServer(executable=options.vscode_path, port=options.port)
+    dbg = DebugAdaptorServer(
+        executable=options.vscode_path, connection=options.connection
+    )
     if options.debug:
         raw_input('Waiting for debugger to attach pid "%i"' % (dbg.get_pid()))
     if options.replay:

@@ -832,7 +832,7 @@ func.func @func() {
 // -----
 
 func.func @disallow_zero_rank_tensor_with_ranked_tensor(%arg0 : tensor<i1>, %arg1 : tensor<2xi64>, %arg2 : tensor<2xi64>) -> tensor<2xi64> {
-  // expected-error @+1 {{'arith.select' op failed to verify that condition is scalar or has matching shape}}
+  // expected-error @+1 {{'arith.select' op failed to verify that condition is signless i1 or has matching shape}}
   %0 = arith.select %arg0, %arg1, %arg2 : tensor<i1>, tensor<2xi64>
   return %0 : tensor<2xi64>
 }
@@ -840,7 +840,7 @@ func.func @disallow_zero_rank_tensor_with_ranked_tensor(%arg0 : tensor<i1>, %arg
 // -----
 
 func.func @disallow_zero_rank_tensor_with_unranked_tensor(%arg0 : tensor<i1>, %arg1 : tensor<2x?xi64>, %arg2 : tensor<2x?xi64>) -> tensor<2x?xi64> {
-  // expected-error @+1 {{'arith.select' op failed to verify that condition is scalar or has matching shape}}
+  // expected-error @+1 {{'arith.select' op failed to verify that condition is signless i1 or has matching shape}}
   %0 = arith.select %arg0, %arg1, %arg2 : tensor<i1>, tensor<2x?xi64>
   return %0 : tensor<2x?xi64>
 }
@@ -852,4 +852,20 @@ func.func @select_tensor_encoding(
   // expected-error @+1 {{'arith.select' op expected condition type to have the same shape as the result type}}
   %0 = arith.select %arg0, %arg1, %arg2 : tensor<8xi1, "bar">, tensor<8xi32, "foo">
   return %0 : tensor<8xi32, "foo">
+}
+
+// -----
+
+func.func @bitcast_index_0(%arg0 : i64) -> index {
+  // expected-error @+1 {{'arith.bitcast' op result #0 must be signless-integer-or-float-like or memref of signless-integer or float, but got 'index'}}
+  %0 = arith.bitcast %arg0 : i64 to index
+  return %0 : index
+}
+
+// -----
+
+func.func @bitcast_index_1(%arg0 : index) -> i64 {
+  // expected-error @+1 {{'arith.bitcast' op operand #0 must be signless-integer-or-float-like or memref of signless-integer or float, but got 'index'}}
+  %0 = arith.bitcast %arg0 : index to i64
+  return %0 : i64
 }

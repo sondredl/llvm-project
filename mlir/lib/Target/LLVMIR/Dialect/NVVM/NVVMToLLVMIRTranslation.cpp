@@ -15,9 +15,9 @@
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Operation.h"
-#include "mlir/Support/LogicalResult.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 
@@ -25,9 +25,17 @@ using namespace mlir;
 using namespace mlir::LLVM;
 using mlir::LLVM::detail::createIntrinsicCall;
 
+#define REDUX_F32_ID_IMPL(op, abs, hasNaN)                                     \
+  hasNaN ? llvm::Intrinsic::nvvm_redux_sync_f##op##abs##_NaN                   \
+         : llvm::Intrinsic::nvvm_redux_sync_f##op##abs
+
+#define GET_REDUX_F32_ID(op, hasAbs, hasNaN)                                   \
+  hasAbs ? REDUX_F32_ID_IMPL(op, _abs, hasNaN) : REDUX_F32_ID_IMPL(op, , hasNaN)
+
 static llvm::Intrinsic::ID getReduxIntrinsicId(llvm::Type *resultType,
-                                               NVVM::ReduxKind kind) {
-  if (!resultType->isIntegerTy(32))
+                                               NVVM::ReduxKind kind,
+                                               bool hasAbs, bool hasNaN) {
+  if (!(resultType->isIntegerTy(32) || resultType->isFloatTy()))
     llvm_unreachable("unsupported data type for redux");
 
   switch (kind) {
@@ -47,6 +55,10 @@ static llvm::Intrinsic::ID getReduxIntrinsicId(llvm::Type *resultType,
     return llvm::Intrinsic::nvvm_redux_sync_max;
   case NVVM::ReduxKind::MIN:
     return llvm::Intrinsic::nvvm_redux_sync_min;
+  case NVVM::ReduxKind::FMIN:
+    return GET_REDUX_F32_ID(min, hasAbs, hasNaN);
+  case NVVM::ReduxKind::FMAX:
+    return GET_REDUX_F32_ID(max, hasAbs, hasNaN);
   }
   llvm_unreachable("unknown redux kind");
 }
@@ -121,6 +133,41 @@ static llvm::Intrinsic::ID getLdMatrixIntrinsicId(NVVM::MMALayout layout,
   }
 }
 
+static unsigned getUnidirectionalFenceProxyID(NVVM::ProxyKind fromProxy,
+                                              NVVM::ProxyKind toProxy,
+                                              NVVM::MemScopeKind scope,
+                                              bool isRelease) {
+  if (fromProxy == NVVM::ProxyKind::GENERIC &&
+      toProxy == NVVM::ProxyKind::TENSORMAP) {
+    switch (scope) {
+    case NVVM::MemScopeKind::CTA: {
+      if (isRelease)
+        return llvm::Intrinsic::nvvm_fence_proxy_tensormap_generic_release_cta;
+      return llvm::Intrinsic::nvvm_fence_proxy_tensormap_generic_acquire_cta;
+    }
+    case NVVM::MemScopeKind::CLUSTER: {
+      if (isRelease)
+        return llvm::Intrinsic::
+            nvvm_fence_proxy_tensormap_generic_release_cluster;
+      return llvm::Intrinsic::
+          nvvm_fence_proxy_tensormap_generic_acquire_cluster;
+    }
+    case NVVM::MemScopeKind::GPU: {
+      if (isRelease)
+        return llvm::Intrinsic::nvvm_fence_proxy_tensormap_generic_release_gpu;
+      return llvm::Intrinsic::nvvm_fence_proxy_tensormap_generic_acquire_gpu;
+    }
+    case NVVM::MemScopeKind::SYS: {
+      if (isRelease)
+        return llvm::Intrinsic::nvvm_fence_proxy_tensormap_generic_release_sys;
+      return llvm::Intrinsic::nvvm_fence_proxy_tensormap_generic_acquire_sys;
+    }
+    }
+    llvm_unreachable("Unknown scope for uni-directional fence.proxy operation");
+  }
+  llvm_unreachable("Unsupported proxy kinds");
+}
+
 namespace {
 /// Implementation of the dialect interface that converts operations belonging
 /// to the NVVM dialect to LLVM IR.
@@ -181,23 +228,29 @@ public:
       if (values.size() > 2)
         generateMetadata(values[2], NVVM::NVVMDialect::getReqntidZName());
     } else if (attribute.getName() ==
+               NVVM::NVVMDialect::getClusterDimAttrName()) {
+      if (!dyn_cast<DenseI32ArrayAttr>(attribute.getValue()))
+        return failure();
+      auto values = cast<DenseI32ArrayAttr>(attribute.getValue());
+      generateMetadata(values[0], NVVM::NVVMDialect::getClusterDimXName());
+      if (values.size() > 1)
+        generateMetadata(values[1], NVVM::NVVMDialect::getClusterDimYName());
+      if (values.size() > 2)
+        generateMetadata(values[2], NVVM::NVVMDialect::getClusterDimZName());
+    } else if (attribute.getName() ==
+               NVVM::NVVMDialect::getClusterMaxBlocksAttrName()) {
+      auto value = dyn_cast<IntegerAttr>(attribute.getValue());
+      llvmFunc->addFnAttr("nvvm.maxclusterrank", llvm::utostr(value.getInt()));
+    } else if (attribute.getName() ==
                NVVM::NVVMDialect::getMinctasmAttrName()) {
       auto value = dyn_cast<IntegerAttr>(attribute.getValue());
-      generateMetadata(value.getInt(), "minctasm");
+      llvmFunc->addFnAttr("nvvm.minctasm", llvm::utostr(value.getInt()));
     } else if (attribute.getName() == NVVM::NVVMDialect::getMaxnregAttrName()) {
       auto value = dyn_cast<IntegerAttr>(attribute.getValue());
-      generateMetadata(value.getInt(), "maxnreg");
+      llvmFunc->addFnAttr("nvvm.maxnreg", llvm::utostr(value.getInt()));
     } else if (attribute.getName() ==
                NVVM::NVVMDialect::getKernelFuncAttrName()) {
-      llvm::Metadata *llvmMetadataKernel[] = {
-          llvm::ValueAsMetadata::get(llvmFunc),
-          llvm::MDString::get(llvmContext, "kernel"),
-          llvm::ValueAsMetadata::get(
-              llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvmContext), 1))};
-      llvm::MDNode *llvmMetadataNode =
-          llvm::MDNode::get(llvmContext, llvmMetadataKernel);
-      moduleTranslation.getOrInsertNamedModuleMetadata("nvvm.annotations")
-          ->addOperand(llvmMetadataNode);
+      llvmFunc->setCallingConv(llvm::CallingConv::PTX_Kernel);
     }
     return success();
   }

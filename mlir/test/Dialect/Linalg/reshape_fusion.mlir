@@ -37,12 +37,12 @@ func.func @generic_op_reshape_producer_fusion(%arg0 : tensor<?x?x4x?xf32>,
 //      CHECK:   %[[DIM:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x?x?xf32>
 //      CHECK:   %[[DIM_0:.+]] = tensor.dim %[[ARG1]], %[[C1]] : tensor<?x?x?xf32>
 //      CHECK:   %[[DIM_1:.+]] = tensor.dim %[[ARG1]], %[[C2]] : tensor<?x?x?xf32>
-//      CHECK:   %[[VAL_0:.+]] = arith.divui %[[DIM_1]], %[[C4]] : index
+//      CHECK:   %[[VAL_0:.+]] = arith.divsi %[[DIM_1]], %[[C4]] : index
 //      CHECK:   %[[T1:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0], [1], [2, 3]] output_shape [%[[DIM]], %[[DIM_0]], %[[VAL_0]], 4] : tensor<?x?x?xf32> into tensor<?x?x?x4xf32>
 //      CHECK:   %[[DIM_2:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x?x?xf32>
 //      CHECK:   %[[DIM_3:.+]] = tensor.dim %[[ARG1]], %[[C1]] : tensor<?x?x?xf32>
 //      CHECK:   %[[DIM_4:.+]] = tensor.dim %[[ARG1]], %[[C2]] : tensor<?x?x?xf32>
-//      CHECK:   %[[VAL_1:.+]] = arith.divui %[[DIM_4]], %[[C4]] : index
+//      CHECK:   %[[VAL_1:.+]] = arith.divsi %[[DIM_4]], %[[C4]] : index
 //      CHECK:   %[[T2:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0], [1], [2, 3]] output_shape [%[[DIM_2]], %[[DIM_3]], %[[VAL_1]], 4] : tensor<?x?x?xf32> into tensor<?x?x?x4xf32>
 //      CHECK:   %[[T3:.+]] = linalg.generic
 // CHECK-SAME:     indexing_maps = [#[[MAP5]], #[[MAP6]], #[[MAP7]], #[[MAP6]]]
@@ -93,15 +93,15 @@ func.func @generic_op_reshape_consumer_fusion(%arg0 : tensor<?x?xf32>,
 //      CHECK:   %[[C0:.+]] = arith.constant 0 : index
 //      CHECK:   %[[DIM:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_0:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_0:.+]] = arith.divui %[[DIM_0]], %[[C20]] : index
+//      CHECK:   %[[VAL_0:.+]] = arith.divsi %[[DIM_0]], %[[C20]] : index
 //      CHECK:   %[[T0:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0], [1, 2, 3]] output_shape [%[[DIM]], 4, %[[VAL_0]], 5] : tensor<?x?xf32> into tensor<?x4x?x5xf32>
 //      CHECK:   %[[DIM_1:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_2:.+]] = tensor.dim %[[ARG1]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_1:.+]] = arith.divui %[[DIM_2]], %[[C20]] : index
+//      CHECK:   %[[VAL_1:.+]] = arith.divsi %[[DIM_2]], %[[C20]] : index
 //      CHECK:   %[[T1:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0], [1, 2, 3]] output_shape [%[[DIM_1]], 4, %[[VAL_1]], 5] : tensor<?x?xf32> into tensor<?x4x?x5xf32>
 //      CHECK:   %[[DIM_4:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_5:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_2:.+]] = arith.divui %[[DIM_5]], %[[C20]] : index
+//      CHECK:   %[[VAL_2:.+]] = arith.divsi %[[DIM_5]], %[[C20]] : index
 //      CHECK:   %[[T2:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0], [1, 2, 3]] output_shape [%[[DIM_4]], 4, %[[VAL_2]], 5] : tensor<?x?xf32> into tensor<?x4x?x5xf32>
 //      CHECK:   %[[T3:.+]] = linalg.generic
 // CHECK-SAME:     indexing_maps = [#[[MAP2]], #[[MAP2]], #[[MAP3]], #[[MAP2]]]
@@ -144,18 +144,18 @@ func.func @reshape_as_consumer_permutation
 //      CHECK:   %[[DIM:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?x?xf32>
 //      CHECK:   %[[DIM_0:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?x?xf32>
 //      CHECK:   %[[DIM_1:.+]] = tensor.dim %[[ARG0]], %[[C2]] : tensor<?x?x?xf32>
-//      CHECK:   %[[VAL_0:.+]] = arith.divui %[[DIM]], %[[C12]] : index
-//      CHECK:   %[[VAL_1:.+]] = arith.divui %[[DIM_0]], %[[C2]] : index
+//      CHECK:   %[[VAL_0:.+]] = arith.divsi %[[DIM]], %[[C12]] : index
+//      CHECK:   %[[VAL_1:.+]] = arith.divsi %[[DIM_0]], %[[C2]] : index
 //      CHECK:   %[[T0:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0, 1, 2], [3, 4], [5]] output_shape [3, 4, %[[VAL_0]], %[[VAL_1]], 2, %[[DIM_1]]] : tensor<?x?x?xf32> into tensor<3x4x?x?x2x?xf32>
 //      CHECK:   %[[DIM_2:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_3:.+]] = tensor.dim %[[ARG1]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_2:.+]] = arith.divui %[[DIM_2]], %[[C12]] : index
+//      CHECK:   %[[VAL_2:.+]] = arith.divsi %[[DIM_2]], %[[C12]] : index
 //      CHECK:   %[[T1:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0, 1, 2], [3]] output_shape [3, 4, %[[VAL_2]], %[[DIM_3]]] : tensor<?x?xf32> into tensor<3x4x?x?xf32>
 //      CHECK:   %[[DIM_5:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?x?xf32>
 //      CHECK:   %[[DIM_6:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?x?xf32>
 //      CHECK:   %[[DIM_7:.+]] = tensor.dim %[[ARG0]], %[[C2]] : tensor<?x?x?xf32>
-//      CHECK:   %[[VAL_3:.+]] = arith.divui %[[DIM_5]], %[[C2]] : index
-//      CHECK:   %[[VAL_4:.+]] = arith.divui %[[DIM_7]], %[[C12]] : index
+//      CHECK:   %[[VAL_3:.+]] = arith.divsi %[[DIM_5]], %[[C2]] : index
+//      CHECK:   %[[VAL_4:.+]] = arith.divsi %[[DIM_7]], %[[C12]] : index
 //      CHECK:   %[[T2:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0, 1], [2], [3, 4, 5]] output_shape [%[[VAL_3]], 2, %[[DIM_6]], 3, 4, %[[VAL_4]]] : tensor<?x?x?xf32> into tensor<?x2x?x3x4x?xf32>
 //      CHECK:   %[[T3:.+]] = linalg.generic
 // CHECK-SAME:     indexing_maps = [#[[MAP8]], #[[MAP9]], #[[MAP10]]]
@@ -463,15 +463,15 @@ func.func @generic_op_reshape_consumer_fusion_projected(%arg0 : tensor<?x?xf32>,
 //      CHECK:   %[[C0:.+]] = arith.constant 0 : index
 //      CHECK:   %[[DIM:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_0:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_0:.+]] = arith.divui %[[DIM]], %[[C20]] : index
+//      CHECK:   %[[VAL_0:.+]] = arith.divsi %[[DIM]], %[[C20]] : index
 //      CHECK:   %[[T0:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0, 1, 2], [3]] output_shape [%[[VAL_0]], 4, 5, %[[DIM_0]]] : tensor<?x?xf32> into tensor<?x4x5x?xf32>
 //      CHECK:   %[[DIM_1:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_2:.+]] = tensor.dim %[[ARG1]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_1:.+]] = arith.divui %[[DIM_1]], %[[C20]] : index
+//      CHECK:   %[[VAL_1:.+]] = arith.divsi %[[DIM_1]], %[[C20]] : index
 //      CHECK:   %[[T1:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0, 1, 2], [3]] output_shape [%[[VAL_1]], 4, 5, %[[DIM_2]]] : tensor<?x?xf32> into tensor<?x4x5x?xf32>
 //      CHECK:   %[[DIM_4:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_5:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_2:.+]] = arith.divui %[[DIM_5]], %[[C20]] : index
+//      CHECK:   %[[VAL_2:.+]] = arith.divsi %[[DIM_5]], %[[C20]] : index
 //      CHECK:   %[[T2:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0], [1, 2, 3]] output_shape [%[[DIM_4]], %[[VAL_2]], 4, 5] : tensor<?x?xf32> into tensor<?x?x4x5xf32>
 //      CHECK:   %[[T3:.+]] = linalg.generic
 // CHECK-SAME:     indexing_maps = [#[[MAP4]], #[[MAP4]], #[[MAP5]]]
@@ -569,24 +569,24 @@ func.func @reshape_as_consumer_permutation_with_multiple_results
 //       CHECK:   %[[DIM:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?x?xf32>
 //       CHECK:   %[[DIM_0:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?x?xf32>
 //       CHECK:   %[[DIM_1:.+]] = tensor.dim %[[ARG0]], %[[C2]] : tensor<?x?x?xf32>
-//       CHECK:   %[[VAL_0:.+]] = arith.divui %[[DIM]], %[[C12]] : index
-//       CHECK:   %[[VAL_1:.+]] = arith.divui %[[DIM_0]], %[[C2]] : index
+//       CHECK:   %[[VAL_0:.+]] = arith.divsi %[[DIM]], %[[C12]] : index
+//       CHECK:   %[[VAL_1:.+]] = arith.divsi %[[DIM_0]], %[[C2]] : index
 //       CHECK:   %[[RESHAPE0:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0, 1, 2], [3, 4], [5]] output_shape [3, 4, %[[VAL_0]], %[[VAL_1]], 2, %[[DIM_1]]] : tensor<?x?x?xf32> into tensor<3x4x?x?x2x?xf32>
 //       CHECK:   %[[DIM_2:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x?xf32>
 //       CHECK:   %[[DIM_3:.+]] = tensor.dim %[[ARG1]], %[[C1]] : tensor<?x?xf32>
-//       CHECK:   %[[VAL_2:.+]] = arith.divui %[[DIM_2]], %[[C12]] : index
+//       CHECK:   %[[VAL_2:.+]] = arith.divsi %[[DIM_2]], %[[C12]] : index
 //       CHECK:   %[[RESHAPE1:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0, 1, 2], [3]] output_shape [3, 4, %[[VAL_2]], %[[DIM_3]]] : tensor<?x?xf32> into tensor<3x4x?x?xf32>
 //       CHECK:   %[[DIM_5:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?x?xf32>
 //       CHECK:   %[[DIM_6:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?x?xf32>
 //       CHECK:   %[[DIM_7:.+]] = tensor.dim %[[ARG0]], %[[C2]] : tensor<?x?x?xf32>
-//       CHECK:   %[[VAL_3:.+]] = arith.divui %[[DIM_5]], %[[C2]] : index
-//       CHECK:   %[[VAL_4:.+]] = arith.divui %[[DIM_7]], %[[C12]] : index
+//       CHECK:   %[[VAL_3:.+]] = arith.divsi %[[DIM_5]], %[[C2]] : index
+//       CHECK:   %[[VAL_4:.+]] = arith.divsi %[[DIM_7]], %[[C12]] : index
 //       CHECK:   %[[RESHAPE2:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0, 1], [2], [3, 4, 5]] output_shape [%[[VAL_3]], 2, %[[DIM_6]], 3, 4, %[[VAL_4]]] : tensor<?x?x?xf32> into tensor<?x2x?x3x4x?xf32>
 //       CHECK:   %[[DIM_9:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?x?xf32>
 //       CHECK:   %[[DIM_10:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?x?xf32>
 //       CHECK:   %[[DIM_11:.+]] = tensor.dim %[[ARG0]], %[[C2]] : tensor<?x?x?xf32>
-//       CHECK:   %[[VAL_5:.+]] = arith.divui %[[DIM_10]], %[[C2]] : index
-//       CHECK:   %[[VAL_6:.+]] = arith.divui %[[DIM_11]], %[[C12]] : index
+//       CHECK:   %[[VAL_5:.+]] = arith.divsi %[[DIM_10]], %[[C2]] : index
+//       CHECK:   %[[VAL_6:.+]] = arith.divsi %[[DIM_11]], %[[C12]] : index
 //       CHECK:   %[[RESHAPE3:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0], [1, 2], [3, 4, 5]] output_shape [%[[DIM_9]], %[[VAL_5]], 2, 3, 4, %[[VAL_6]]] : tensor<?x?x?xf32> into tensor<?x?x2x3x4x?xf32>
 //       CHECK:   %[[GENERIC:.+]]:2 = linalg.generic
 //  CHECK-SAME:      indexing_maps = [#[[MAP0]], #[[MAP1]], #[[MAP2]], #[[MAP3]]]
@@ -667,11 +667,11 @@ func.func @generic_op_reshape_consumer_fusion_reduction(%arg0 : tensor<?x?xf32>,
 //      CHECK:   %[[C0:.+]] = arith.constant 0 : index
 //      CHECK:   %[[DIM:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_0:.+]] = tensor.dim %[[ARG1]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_0:.+]] = arith.divui %[[DIM]], %[[C20]] : index
+//      CHECK:   %[[VAL_0:.+]] = arith.divsi %[[DIM]], %[[C20]] : index
 //      CHECK:   %[[T1:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0, 1, 2], [3]] output_shape [%[[VAL_0]], 4, 5, %[[DIM_0]]] : tensor<?x?xf32> into tensor<?x4x5x?xf32>
 //      CHECK:   %[[DIM_1:.+]] = tensor.dim %[[ARG2]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_2:.+]] = tensor.dim %[[ARG2]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_1:.+]] = arith.divui %[[DIM_2]], %[[C20]] : index
+//      CHECK:   %[[VAL_1:.+]] = arith.divsi %[[DIM_2]], %[[C20]] : index
 //      CHECK:   %[[T2:.+]] = tensor.expand_shape %[[ARG2]] {{\[\[}}0], [1, 2, 3]] output_shape [%[[DIM_1]], %[[VAL_1]], 4, 5] : tensor<?x?xf32> into tensor<?x?x4x5xf32>
 //      CHECK:   %[[T3:.+]] = linalg.generic
 // CHECK-SAME:     indexing_maps = [#[[MAP0]], #[[MAP1]], #[[MAP2]]]
@@ -719,13 +719,13 @@ func.func @generic_op_reshape_producer_fusion_with_reduction(%arg0 : tensor<?x7x
 //      CHECK:   %[[C0:.+]] = arith.constant 0 : index
 //      CHECK:   %[[DIM:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x4x?xf32>
 //      CHECK:   %[[DIM_0:.+]] = tensor.dim %[[ARG1]], %[[C2]] : tensor<?x4x?xf32>
-//      CHECK:   %[[VAL_0:.+]] = arith.divui %[[DIM]], %[[C8]] : index
-//      CHECK:   %[[VAL_1:.+]] = arith.divui %[[DIM_0]], %[[C7]] : index
+//      CHECK:   %[[VAL_0:.+]] = arith.divsi %[[DIM]], %[[C8]] : index
+//      CHECK:   %[[VAL_1:.+]] = arith.divsi %[[DIM_0]], %[[C7]] : index
 //      CHECK:   %[[T1:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0, 1], [2], [3, 4]] output_shape [%[[VAL_0]], 8, 4, %[[VAL_1]], 7] : tensor<?x4x?xf32> into tensor<?x8x4x?x7xf32>
 //      CHECK:   %[[DIM_1:.+]] = tensor.dim %[[ARG2]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_2:.+]] = tensor.dim %[[ARG2]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_2:.+]] = arith.divui %[[DIM_1]], %[[C8]] : index
-//      CHECK:   %[[VAL_3:.+]] = arith.divui %[[DIM_2]], %[[C7]] : index
+//      CHECK:   %[[VAL_2:.+]] = arith.divsi %[[DIM_1]], %[[C8]] : index
+//      CHECK:   %[[VAL_3:.+]] = arith.divsi %[[DIM_2]], %[[C7]] : index
 //      CHECK:   %[[T2:.+]] = tensor.expand_shape %[[ARG2]] {{\[\[}}0, 1], [2, 3]] output_shape [%[[VAL_2]], 8, %[[VAL_3]], 7] : tensor<?x?xf32> into tensor<?x8x?x7xf32>
 //      CHECK:   %[[T3:.+]] = linalg.generic
 // CHECK-SAME:     indexing_maps = [#[[$MAP0]], #[[$MAP1]], #[[$MAP2]]]
@@ -764,15 +764,15 @@ func.func @linalg_add_reshape_consumer_fusion(%arg0 : tensor<?x?xf32>,
 //      CHECK:   %[[C0:.+]] = arith.constant 0 : index
 //      CHECK:   %[[DIM:.+]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_0:.+]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_0:.+]] = arith.divui %[[DIM_0]], %[[C20]] : index
+//      CHECK:   %[[VAL_0:.+]] = arith.divsi %[[DIM_0]], %[[C20]] : index
 //      CHECK:   %[[T1:.+]] = tensor.expand_shape %[[ARG0]] {{\[\[}}0], [1, 2, 3]] output_shape [%[[DIM]], %[[VAL_0]], 4, 5] : tensor<?x?xf32> into tensor<?x?x4x5xf32>
 //      CHECK:   %[[DIM_1:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_2:.+]] = tensor.dim %[[ARG1]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_1:.+]] = arith.divui %[[DIM_2]], %[[C20]] : index
+//      CHECK:   %[[VAL_1:.+]] = arith.divsi %[[DIM_2]], %[[C20]] : index
 //      CHECK:   %[[T2:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0], [1, 2, 3]] output_shape [%[[DIM_1]], %[[VAL_1]], 4, 5] : tensor<?x?xf32> into tensor<?x?x4x5xf32>
 //      CHECK:   %[[DIM_4:.+]] = tensor.dim %[[ARG2]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_5:.+]] = tensor.dim %[[ARG2]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_2:.+]] = arith.divui %[[DIM_5]], %[[C20]] : index
+//      CHECK:   %[[VAL_2:.+]] = arith.divsi %[[DIM_5]], %[[C20]] : index
 //      CHECK:   %[[T3:.+]] = tensor.expand_shape %[[ARG2]] {{\[\[}}0], [1, 2, 3]] output_shape [%[[DIM_4]], %[[VAL_2]], 4, 5] : tensor<?x?xf32> into tensor<?x?x4x5xf32>
 //      CHECK:   %[[T4:.+]] = linalg.generic
 // CHECK-SAME:     indexing_maps = [#[[MAP]], #[[MAP]], #[[MAP]]]
@@ -809,13 +809,13 @@ func.func @linalg_add_reshape_producer_fusion(%arg0 : tensor<?x7x?x8xf32>,
 //      CHECK:   %[[C0:.+]] = arith.constant 0 : index
 //      CHECK:   %[[DIM:.+]] = tensor.dim %[[ARG1]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_0:.+]] = tensor.dim %[[ARG1]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_0:.+]] = arith.divui %[[DIM]], %[[C7]] : index
-//      CHECK:   %[[VAL_1:.+]] = arith.divui %[[DIM_0]], %[[C8]] : index
+//      CHECK:   %[[VAL_0:.+]] = arith.divsi %[[DIM]], %[[C7]] : index
+//      CHECK:   %[[VAL_1:.+]] = arith.divsi %[[DIM_0]], %[[C8]] : index
 //      CHECK:   %[[T1:.+]] = tensor.expand_shape %[[ARG1]] {{\[\[}}0, 1], [2, 3]] output_shape [%[[VAL_0]], 7, %[[VAL_1]], 8] : tensor<?x?xf32> into tensor<?x7x?x8xf32>
 //      CHECK:   %[[DIM_1:.+]] = tensor.dim %[[ARG2]], %[[C0]] : tensor<?x?xf32>
 //      CHECK:   %[[DIM_2:.+]] = tensor.dim %[[ARG2]], %[[C1]] : tensor<?x?xf32>
-//      CHECK:   %[[VAL_2:.+]] = arith.divui %[[DIM_1]], %[[C7]] : index
-//      CHECK:   %[[VAL_3:.+]] = arith.divui %[[DIM_2]], %[[C8]] : index
+//      CHECK:   %[[VAL_2:.+]] = arith.divsi %[[DIM_1]], %[[C7]] : index
+//      CHECK:   %[[VAL_3:.+]] = arith.divsi %[[DIM_2]], %[[C8]] : index
 //      CHECK:   %[[T2:.+]] = tensor.expand_shape %[[ARG2]] {{\[\[}}0, 1], [2, 3]] output_shape [%[[VAL_2]], 7, %[[VAL_3]], 8] : tensor<?x?xf32> into tensor<?x7x?x8xf32>
 //      CHECK:   %[[T3:.+]] = linalg.generic
 // CHECK-SAME:     indexing_maps = [#[[$MAP]], #[[$MAP]], #[[$MAP]]]
@@ -826,3 +826,64 @@ func.func @linalg_add_reshape_producer_fusion(%arg0 : tensor<?x7x?x8xf32>,
 // CHECK-SAME:     [0, 1], [2, 3]
 // CHECK-SAME:     tensor<?x7x?x8xf32> into tensor<?x?xf32>
 //      CHECK:   return %[[T4]]
+
+// -----
+
+func.func @fuse_by_expanding_pad(%arg0 : tensor<2x3x4x5x6x7x8x9xi32>) -> tensor<8x12x17x336x14xi32> {
+  %collapse = tensor.collapse_shape %arg0 [[0], [1, 2], [3], [4, 5, 6], [7]] : tensor<2x3x4x5x6x7x8x9xi32> into tensor<2x12x5x336x9xi32>
+  %cst = arith.constant 0 : i32
+  %padded_0 = tensor.pad %collapse low[1, 0, 8, 0, 3] high[5, 0, 4, 0, 2] {
+  ^bb0(%arg1: index, %arg2: index, %arg3: index, %arg4: index, %arg5: index):
+    tensor.yield %cst : i32
+  } : tensor<2x12x5x336x9xi32> to tensor<8x12x17x336x14xi32>
+  return %padded_0 : tensor<8x12x17x336x14xi32>
+}
+//      CHECK: func @fuse_by_expanding_pad(
+// CHECK-SAME:   %[[ARG0:.+]]: tensor<2x3x4x5x6x7x8x9xi32>)
+//      CHECK:   %[[PAD:.+]] = tensor.pad %[[ARG0]]
+// CHECK-SAME:       low[1, 0, 0, 8, 0, 0, 0, 3] high[5, 0, 0, 4, 0, 0, 0, 2]
+//      CHECK:       tensor<2x3x4x5x6x7x8x9xi32> to tensor<8x3x4x17x6x7x8x14xi32>
+//      CHECK:   %[[COLLAPSE:.+]] = tensor.collapse_shape %[[PAD]] {{\[}}[0], [1, 2], [3], [4, 5, 6], [7]]
+// CHECK-SAME:       : tensor<8x3x4x17x6x7x8x14xi32> into tensor<8x12x17x336x14xi32>
+//      CHECK:   return %[[COLLAPSE]]
+
+// -----
+
+func.func @no_fuse_by_expanding_pad(%arg0 : tensor<2x3x4x5x6x7x8x9xi32>) -> tensor<8x12x17x339x14xi32> {
+  %collapse = tensor.collapse_shape %arg0 [[0], [1, 2], [3], [4, 5, 6], [7]] : tensor<2x3x4x5x6x7x8x9xi32> into tensor<2x12x5x336x9xi32>
+  %cst = arith.constant 0 : i32
+  %padded_0 = tensor.pad %collapse low[1, 0, 8, 0, 3] high[5, 0, 4, 3, 2] {
+  ^bb0(%arg1: index, %arg2: index, %arg3: index, %arg4: index, %arg5: index):
+    tensor.yield %cst : i32
+  } : tensor<2x12x5x336x9xi32> to tensor<8x12x17x339x14xi32>
+  return %padded_0 : tensor<8x12x17x339x14xi32>
+}
+//      CHECK: func @no_fuse_by_expanding_pad(
+// CHECK-SAME:   %[[ARG0:.+]]: tensor<2x3x4x5x6x7x8x9xi32>)
+//      CHECK:   %[[COLLAPSE:.+]] = tensor.collapse_shape %[[ARG0]] {{\[}}[0], [1, 2], [3], [4, 5, 6], [7]]
+// CHECK-SAME:       : tensor<2x3x4x5x6x7x8x9xi32> into tensor<2x12x5x336x9xi32>
+//      CHECK:   %[[PAD:.+]] = tensor.pad %[[COLLAPSE]]
+// CHECK-SAME:       low[1, 0, 8, 0, 3] high[5, 0, 4, 3, 2]
+//      CHECK:       tensor<2x12x5x336x9xi32> to tensor<8x12x17x339x14xi32>
+//      CHECK:   return %[[PAD]]
+
+// -----
+
+func.func @fuse_by_expanding_dynamic_pad(%arg0 : tensor<?x?x?x?x?x?xi32>, %l0: index, %l1: index, %h0: index, %h1: index) -> tensor<?x?x?x?xi32> {
+  %collapse = tensor.collapse_shape %arg0 [[0], [1, 2], [3], [4, 5]] : tensor<?x?x?x?x?x?xi32> into tensor<?x?x?x?xi32>
+  %cst = arith.constant 0 : i32
+  %padded_0 = tensor.pad %collapse low[%l0, 0, %l1, 0] high[%h0, 0, %h1, 0] {
+  ^bb0(%arg1: index, %arg2: index, %arg3: index, %arg4: index):
+    tensor.yield %cst : i32
+  } : tensor<?x?x?x?xi32> to tensor<?x?x?x?xi32>
+  return %padded_0 : tensor<?x?x?x?xi32>
+}
+//      CHECK: func @fuse_by_expanding_dynamic_pad(
+// CHECK-SAME:   %[[ARG0:.+]]: tensor<?x?x?x?x?x?xi32>
+// CHECK-SAME:   %[[L0:.+]]: index, %[[L1:.+]]: index, %[[H0:.+]]: index, %[[H1:.+]]: index
+//      CHECK:   %[[PAD:.+]] = tensor.pad %[[ARG0]]
+// CHECK-SAME:       low[%[[L0]], 0, 0, %[[L1]], 0, 0] high[%[[H0]], 0, 0, %[[H1]], 0, 0]
+//      CHECK:       tensor<?x?x?x?x?x?xi32> to tensor<?x?x?x?x?x?xi32>
+//      CHECK:   %[[COLLAPSE:.+]] = tensor.collapse_shape %[[PAD]] {{\[}}[0], [1, 2], [3], [4, 5]]
+// CHECK-SAME:       : tensor<?x?x?x?x?x?xi32> into tensor<?x?x?x?xi32>
+//      CHECK:   return %[[COLLAPSE]]
